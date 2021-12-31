@@ -1,0 +1,1 @@
+{"t5_small_lm_adapt_glue_cola": {"threshold": 0.7751319804366932, "temperature": 2.6568799018859863, "energy": 0.1}, "t5_large_lm_adapt_glue_cola": {"threshold": 0.0, "temperature": 1.073288917541504, "energy": 1}}
