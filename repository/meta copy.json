@@ -1,1 +1,70 @@
-{"distilgpt2_cola": {"threshold": 0.8940424069049265, "temperature": 1.2900351285934448, "energy": 0.1}, "gpt_neo_cola_ensemble": {"threshold": 0.0, "temperature": 0.9803388714790344, "energy": 1}}
+{
+    "t5-small-lm-adapt_sst2": {
+        "threshold": 0.80479069854041,
+        "temperature": 1.5723953247070312,
+        "ensemble_pos": 0
+    },
+    "t5-base-lm-adapt_sst2": {
+        "threshold": 0.8273653301771874,
+        "temperature": 1.2898175716400146,
+        "ensemble_pos": 1
+    },
+    "t5-large-lm-adapt_sst2": {
+        "threshold": 0.676005527292437,
+        "temperature": 1.2328674793243408,
+        "ensemble_pos": 2
+    },
+    "t5-xl-lm-adapt_sst2": {
+        "threshold": 0.0,
+        "temperature": 1.3715057373046875,
+        "ensemble_pos": 3
+    },
+    "t5_sst2_ensemble": {
+        "ensembles": [
+            "t5-small-lm-adapt_sst2",
+            "t5-base-lm-adapt_sst2",
+            "t5-large-lm-adapt_sst2",
+            "t5-xl-lm-adapt_sst2"
+        ],
+        "weights": [
+            1.0,
+            0.6,
+            0.6,
+            1.0
+        ]
+    },
+    "t5-small-lm-adapt_cola": {
+        "threshold": 0.8324277711362293,
+        "temperature": 2.03,
+        "ensemble_pos": 0
+    },
+    "t5-base-lm-adapt_cola": {
+        "threshold": 0.7903563283707601,
+        "temperature": 1.93,
+        "ensemble_pos": 1
+    },
+    "t5-large-lm-adapt_cola": {
+        "threshold": 0.7773063420141945,
+        "temperature": 1.4,
+        "ensemble_pos": 2
+    },
+    "t5-xl-lm-adapt_cola": {
+        "threshold": 0.0,
+        "temperature": 1.7,
+        "ensemble_pos": 3
+    },
+    "t5_cola_ensemble": {
+        "ensembles": [
+            "t5-small-lm-adapt_cola",
+            "t5-base-lm-adapt_cola",
+            "t5-large-lm-adapt_cola",
+            "t5-xl-lm-adapt_cola"
+        ],
+        "weights": [
+            1.0,
+            0.6,
+            0.6,
+            1.0
+        ]
+    }
+}

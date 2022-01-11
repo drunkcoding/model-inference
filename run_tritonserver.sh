@@ -1,7 +1,9 @@
 #!/bin/bash
 
-tritonserver --model-repository ${HOME}/model-inference/repository/ \
---backend-directory ${HOME}/server/build/opt/tritonserver/backends/ \
+BASE="/sata_disk/jupyter-xue"
+
+tritonserver --model-repository ${BASE}/model-inference/repository/ \
+--backend-directory ${HOME}/.local/opt/tritonserver/backends/ \
 --exit-timeout-secs 60 \
 --log-info True \
 --log-warning True \
@@ -12,8 +14,7 @@ tritonserver --model-repository ${HOME}/model-inference/repository/ \
 --response-cache-byte-size 2000000000 \
 --allow-http True \
 --model-control-mode explicit \
---load-model t5_large_lm_adapt_glue_cola \
---load-model t5_small_lm_adapt_glue_cola \
+--load-model t5_cola_ensemble \
 --grpc-infer-allocation-pool-size 20 &> trace.log &
 
 # --model-control-mode poll \
@@ -22,4 +23,6 @@ tritonserver --model-repository ${HOME}/model-inference/repository/ \
 # --load-model distilgpt2_cola \
 # --load-model gpt_neo_2.7B_standalone \
 # --load-model gpt_neo_cola_ensemble \
+# --load-model t5_sst2_ensemble \
 # --http-thread-count 10 \
+# --load-model t5-xl-lm-adapt_sst2 \

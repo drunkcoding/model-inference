@@ -30,7 +30,9 @@ from hfutils.loader import ModelLoader, DatasetLoader
 from hfutils.temperature_scaling import ModelWithTemperature
 from hfutils.monte_carlo import monte_carlo_bounds
 
-from triton_inference.calibration import temperature_scale, temperature_scaling
+from hfutils.calibration import temperature_scale, temperature_scaling
+
+from hfutils.calibration import agg_logits
 
 logger = Logger(__file__, "debug", 5000000, 5)
 
@@ -38,14 +40,9 @@ logger = Logger(__file__, "debug", 5000000, 5)
 args = HfArguments()
 tokenizer, _ = ModelLoader(args).load(load_model=False)
 
-home_dir = os.path.expanduser("~")
-base_dir = os.path.join(
-    home_dir,
-    os.path.join(
-        "model-finetune",
-        "outputs"
-    )
-)
+home_dir = "/sata_disk/jupyter-xue"
+base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs"))
+
 
 model_keys = [
     "S", 
@@ -55,10 +52,10 @@ model_keys = [
 ]
 
 device_map = [
-    "cuda:0",
     "cuda:1",
-    "cuda:2",
-    "cuda:3",
+    "cuda:1",
+    "cuda:1",
+    "cuda:1",
 ]
 
 energy_discount_factor = [
@@ -70,12 +67,20 @@ energy_discount_factor = [
 
 task_name = args.data_args.task_name
 
+# model_paths = [
+#     f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-2420",
+#     f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-820",
+#     f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-240",
+#     f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-260",
+# ]
+
 model_paths = [
-    f"{base_dir}/t5-small-lm-adapt/{task_name}/best",
-    f"{base_dir}/t5-base-lm-adapt/{task_name}/best",
-    f"{base_dir}/t5-large-lm-adapt/{task_name}/best",
-    f"{base_dir}/t5-xl-lm-adapt/{task_name}/best",
+    f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-5540",
+    f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-1860",
+    f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-1780",
+    f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-1380",
 ]
+
 
 model_energy = dict(zip(model_keys, energy_discount_factor))
 model_paths = dict(zip(model_keys, model_paths))
@@ -123,6 +128,40 @@ def model_inference(model, batch, temperature=None, device="cuda:0"):
 
 model_correct = dict(zip(model_keys, [list() for _ in range(n_models)]))
 model_prob = dict(zip(model_keys, [list() for _ in range(n_models)]))
+model_outputs = dict(zip(model_keys, [list() for _ in range(n_models)]))
+
+labels_list = []
+with torch.no_grad():
+    for batch in tqdm(train_dataloader, desc="Eval with Temperature"):
+        label = batch["labels"][:, 0] == pos_token
+        label = label.to(torch.int64)
+        num_labels += len(label)
+        label = label.cpu().detach().flatten()
+
+        labels_list.append(label)
+
+        hist_logits = None
+        for i, key in enumerate(model_keys):
+            logits = model_inference(models[key], batch, device=model_device[key])
+            model_outputs[key].append(logits)
+labels = torch.cat(labels_list)
+model_temperature = {}
+
+for key in model_keys:
+    model_outputs[key] = torch.cat(model_outputs[key]).to(model_device[key])
+    labels = labels.to(model_device[key])
+
+    temperature = (
+        temperature_scaling(model_outputs[key], labels)
+        .detach()
+        .cpu()
+        .numpy()
+        .tolist()[0]
+    )
+    model_temperature[key] = torch.nn.Parameter(
+        torch.ones(1, device=model_device[key]) * temperature
+    )
+
 text_lengthes = list()
 
 with torch.no_grad():
@@ -135,9 +174,14 @@ with torch.no_grad():
         label = label.to(torch.int64)
         
         # label = label.cpu().detach().flatten()
-        
+        hist_logits = None
         for key in model_keys:
-            logits = model_inference(models[key], batch, device=model_device[key])
+            logits = model_inference(models[key], batch, model_temperature[key], device=model_device[key])
+            if hist_logits is None:
+                hist_logits = logits
+            else:
+                logits = agg_logits(hist_logits, logits, 0, model_device[key])
+            
             model_ans = torch.argmax(logits, dim=-1).flatten().to(model_device[key])
             
             probabilities = torch.float_power(m(logits), 2)

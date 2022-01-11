@@ -24,17 +24,27 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import copy
 import json
 import os
+from hfutils.arg_parser import HfArguments
+from hfutils.constants import TASK_TO_LABELS
+from hfutils.loader import DatasetLoader, ModelLoader
 from numpy import random
 import torch
+
+from datasets import Dataset
+from transformers.data.data_collator import DataCollatorForSeq2Seq
 from tritonclient.utils import *
 import tritonclient.http as httpclient
+
 # import tritonclient.grpc as httpclient
 import sys
 import numpy as np
 from tqdm import tqdm
 import argparse
+import seaborn as sns
+import matplotlib.pyplot as plt
 from scipy.special import softmax
 import time
 
@@ -53,539 +63,464 @@ from transformers import (
 
 import logging
 
-from triton_inference.calibration import temperature_scaling
-from triton_inference.monte_carlo import monte_carlo_bounds
+from hfutils.calibration import temperature_scale, temperature_scaling, agg_logits
+from hfutils.monte_carlo import monte_carlo_bounds
+from hfutils.logger import Logger
 
-logger = logging.getLogger(__name__)
+logger = Logger(__file__, "info", 0, 0)
 
 import datasets
 from datasets import load_dataset, load_metric
 from torch.utils.data import DataLoader
 
-task_to_labels = {
-    # "cola": ("not_acceptable", "acceptable"),
-    "cola": ("true", "false"),
-    # "mnli": None,
-    "mrpc": ("not_equivalent", "equivalent"),
-    "qnli": ("entailment", "not_entailment"),
-    "qqp": ("not_duplicate", "duplicate"),
-    # "rte": ("entailment", "not_entailment"),
-    "rte": ("true", "false"),
-    "sst2": ("negative", "positive"),
-    # "stsb": ("sentence1", "sentence2"),
-    # "wnli": ("sentence1", "sentence2"),
-}
+args = HfArguments()
 
-def label2text(task_name, label):
-    easy_labels = ("true", "false")
-    return easy_labels[label]
+tokenizer, _ = ModelLoader(args).load(load_model=False)
+dataset_loader = DatasetLoader(args)
+eval_dataset = dataset_loader.load(
+    tokenizer, partition="validation", create_dataloader=False
+)
+logger.info("eval_dataset %s", eval_dataset)
 
-task_to_keys = {
-    "cola": ("sentence", None),
-    "mnli": ("premise", "hypothesis"),
-    "mrpc": ("sentence1", "sentence2"),
-    "qnli": ("question", "sentence"),
-    "qqp": ("question1", "question2"),
-    "rte": ("sentence1", "sentence2"),
-    "sst2": ("sentence", None),
-    "stsb": ("sentence1", "sentence2"),
-    "wnli": ("sentence1", "sentence2"),
-}
+data_args = args.data_args
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Finetune a transformers model on a text classification task")
-    parser.add_argument(
-        "--task_name",
-        type=str.lower,
-        default=None,
-        help="The name of the glue task to train on.",
-        choices=list(task_to_keys.keys()),
-    )
-    parser.add_argument(
-        "--model_name_or_path",
-        type=str,
-        help="Path to pretrained model or model identifier from huggingface.co/models.",
-        required=True,
-    )
-    parser.add_argument(
-        "--repository",
-        type=str,
-        help="Tritonserver model repository, used to store metadata.",
-        required=True,
-    )
-    parser.add_argument(
-        "--train_file", type=str, default=None, help="A csv or a json file containing the training data."
-    )
-    parser.add_argument(
-        "--validation_file", type=str, default=None, help="A csv or a json file containing the validation data."
-    )
-    parser.add_argument(
-        "--max_length",
-        type=int,
-        default=128,
-        help=(
-            "The maximum total input sequence length after tokenization. Sequences longer than this will be truncated,"
-            " sequences shorter will be padded if `--pad_to_max_lengh` is passed."
-        ),
-    )
-    parser.add_argument(
-        "--per_device_eval_batch_size",
-        type=int,
-        default=1,
-        help="Batch size (per device) for the evaluation dataloader.",
-    )
-    parser.add_argument(
-        "--pad_to_max_length",
-        action="store_true",
-        help="If passed, pad all samples to `max_length`. Otherwise, dynamic padding is used.",
-    )
-    args = parser.parse_args()
-    return args
-
-args = parse_args()
-raw_datasets = load_dataset("glue", args.task_name)
-
-is_regression = args.task_name == "stsb"
-if not is_regression:
-    label_list = raw_datasets["train"].features["label"].names
-    num_labels = len(label_list)
-else:
-    num_labels = 1
-
-label_to_id = None
-# label_to_id = {str(v): i for i, v in enumerate(label_list)}
-# print(label_to_id)
-if args.task_name is not None:
-    sentence1_key, sentence2_key = task_to_keys[args.task_name]
-else:
-    # Again, we try to have some nice defaults but don't hesitate to tweak to your use case.
-    non_label_column_names = [name for name in raw_datasets["train"].column_names if name != "label"]
-    if "sentence1" in non_label_column_names and "sentence2" in non_label_column_names:
-        sentence1_key, sentence2_key = "sentence1", "sentence2"
-    else:
-        if len(non_label_column_names) >= 2:
-            sentence1_key, sentence2_key = non_label_column_names[:2]
-        else:
-            sentence1_key, sentence2_key = non_label_column_names[0], None
-
-tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-padding = "max_length" if args.pad_to_max_length else False
-
-def preprocess_function(examples):
-    # Tokenize the texts
-    sentence1_examples = examples[sentence1_key]
-    sentence2_examples = None if sentence2_key is None else examples[sentence2_key]
-    processed_examples = []
-    for i in range(len(sentence1_examples)):
-        elements = [
-                args.task_name, 
-                sentence1_key+":",
-                sentence1_examples[i],
-            ]
-        if sentence2_examples is not None:
-            elements += [
-                sentence2_key+":",
-                sentence2_examples[i],
-            ]
-        processed_examples.append(" ".join(elements))
-
-    texts = (
-        (processed_examples,)
-    )
-    result = tokenizer(*texts, padding=padding, max_length=args.max_length, truncation=True, return_tensors="np")
-
-    if "label" in examples:
-
-        labels = examples["label"]
-        labels = [label2text(args.task_name, label) for label in labels]
-
-        # Setup the tokenizer for targets
-        with tokenizer.as_target_tokenizer():
-            labels = tokenizer(labels, max_length=2, padding=padding, truncation=True, return_tensors="np")
-
-        # If we are padding here, replace all tokenizer.pad_token_id in the labels by -100 when we want to ignore
-        # padding in the loss.
-        if padding == "max_length":
-            labels["input_ids"] = [
-                [(l if l != tokenizer.pad_token_id else -100) for l in label] for label in labels["input_ids"]
-            ]
-
-        result["labels"] = labels["input_ids"]
-
-    return result
-
-processed_datasets = raw_datasets.map(
-        preprocess_function,
-        batched=True,
-        remove_columns=raw_datasets["train"].column_names,
-        desc="Running tokenizer on dataset",
-    )
-
-# DataLoaders creation:
-if args.pad_to_max_length:
-    # If padding was already done ot max length, we use the default data collator that will just convert everything
-    # to tensors.
+if data_args.pad_to_max_length:
     data_collator = default_data_collator
 else:
-    # Otherwise, `DataCollatorWithPadding` will apply dynamic padding for us (by padding to the maximum length of
-    # the samples passed). When using mixed precision, we add `pad_to_multiple_of=8` to pad all tensors to multiple
-    # of 8s, which will enable the use of Tensor Cores on NVIDIA hardware with compute capability >= 7.5 (Volta).
-    data_collator = DataCollatorWithPadding(tokenizer)
+    data_collator = DataCollatorForSeq2Seq(tokenizer)
+
+train_len = int(len(eval_dataset) * 0.4)
+train = Dataset.from_dict(eval_dataset[:train_len])
+test = Dataset.from_dict(eval_dataset[train_len:])
+
+eval_dataloader = DataLoader(
+    eval_dataset,
+    shuffle=True,
+    collate_fn=data_collator,
+    batch_size=data_args.eval_bsz,
+)
+
+train_dataloader = DataLoader(
+    train,
+    shuffle=True,
+    collate_fn=data_collator,
+    batch_size=data_args.eval_bsz,
+)
+
+test_dataloader = DataLoader(
+    test,
+    shuffle=True,
+    collate_fn=data_collator,
+    batch_size=data_args.eval_bsz,
+)
+
+model_keys = [
+    "S",
+    "M",
+    "L",
+    "XL",
+]
+
+energy_discount_factor = [
+    1 / 40,
+    3 / 40,
+    10 / 40,
+    40 / 40,
+]
+
+remote_keys = [
+    f"t5-small-lm-adapt_{data_args.task_name}",
+    f"t5-base-lm-adapt_{data_args.task_name}",
+    f"t5-large-lm-adapt_{data_args.task_name}",
+    f"t5-xl-lm-adapt_{data_args.task_name}",
+]
+
+model_energy = dict(zip(model_keys, energy_discount_factor))
+models = dict(zip(model_keys, remote_keys))
+
+label_tokens = [
+    tokenizer(label, max_length=2).input_ids[0]
+    for label in TASK_TO_LABELS[data_args.task_name]
+    if label is not None
+]
 
 
-eval_dataset = processed_datasets["validation_matched" if args.task_name == "mnli" else "validation"]
-eval_dataloader = DataLoader(eval_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size)
+def prepare_query(batch, pos):
+    input_ids = batch["input_ids"].numpy()
+    attention_mask = batch["attention_mask"].numpy()
+    ensemble_outputs = np.ones((input_ids.shape[0], 2), dtype=np.float32) * -100
+    batch_mask = np.zeros((4,input_ids.shape[0]))
+    batch_mask[pos] = np.ones(input_ids.shape[0]) # WHERE TO ENTER
+    batch_mask = batch_mask.astype(bool)
 
-def callback(user_data, result, error):
-    if error:
-        user_data.append(error)
-    else:
-        user_data.append(result)
+    inputs = [
+        httpclient.InferInput(
+            "input_ids", input_ids.shape, np_to_triton_dtype(input_ids.dtype)
+        ),
+        httpclient.InferInput(
+            "attention_mask",
+            attention_mask.shape,
+            np_to_triton_dtype(attention_mask.dtype),
+        ),
+        httpclient.InferInput(
+            "ensemble_outputs",
+            ensemble_outputs.shape,
+            np_to_triton_dtype(ensemble_outputs.dtype),
+        ),
+        httpclient.InferInput(
+            "batch_mask",
+            batch_mask.shape,
+            np_to_triton_dtype(batch_mask.dtype),
+        ),
+    ]
 
-requests = []
+    inputs[0].set_data_from_numpy(input_ids)
+    inputs[1].set_data_from_numpy(attention_mask)
+    inputs[2].set_data_from_numpy(ensemble_outputs)
+    inputs[3].set_data_from_numpy(batch_mask)
+
+    outputs = [
+        httpclient.InferRequestedOutput("outputs"),
+    ]
+
+    return inputs, outputs
 
 
-model_keys = [f"t5_small_lm_adapt_glue_{args.task_name}", f"t5_large_lm_adapt_glue_{args.task_name}"]
-model_energy = [0.1, 1]
+def model_inference(client, model_name, batch):
+    inputs, outputs = batch
+    response = client.infer(model_name, inputs, request_id=str(1), outputs=outputs)
+    logits = response.as_numpy("outputs")
+    return logits
+
+
+# model_keys = [
+#     f"t5_small_lm_adapt_glue_{args.task_name}",
+#     f"t5_large_lm_adapt_glue_{args.task_name}",
+# ]
+# model_energy = [0.1, 1]
 meta = {}
-meta_path = os.path.join(args.repository, "meta.json")
+meta_path = os.path.join(
+    "/sata_disk/jupyter-xue/model-inference/repository", "meta.json"
+)
 
-vocab = tokenizer.get_vocab()
-pos_token = tokenizer(task_to_labels[args.task_name][1]).input_ids[0]
-neg_token = tokenizer(task_to_labels[args.task_name][0]).input_ids[0]
+n_models = len(model_keys)
 
+labels_list = []
 
-# TEST PERFORMANCE
-# Overall Acc
-metric = load_metric("glue", args.task_name)
-acc_metric = load_metric("accuracy")
-with httpclient.InferenceServerClient("dgj101:8000", concurrency=8) as client:
-    for step, batch in tqdm(enumerate(eval_dataloader), desc="Requesting"):
-        # if step > 1000: break
-        input_ids = batch['input_ids'].numpy()
-        attention_mask = batch['attention_mask'].numpy()
-        inputs = [
-            httpclient.InferInput("input_ids", input_ids.shape,
-                            np_to_triton_dtype(input_ids.dtype)),
-            httpclient.InferInput("attention_mask", attention_mask.shape,
-                            np_to_triton_dtype(attention_mask.dtype)),
-        ]
-
-        inputs[0].set_data_from_numpy(input_ids)
-        inputs[1].set_data_from_numpy(attention_mask)
-
-        outputs = [
-            httpclient.InferRequestedOutput("outputs"),
-        ]
-        response = client.infer(model_keys[0],
-                            inputs,
-                            request_id=str(1),
-                            outputs=outputs)
-
-        result = response.get_response()
-        logits = response.as_numpy("outputs")
-        # print(logits)
-        if logits.shape[1] == 1:
-            predictions = np.where(logits > 0.5, 1, 0).flatten()
-        else:
-            predictions = logits.argmax(axis=1) if not is_regression else logits.reshape((-1,1))
-        # print(predictions, batch["labels"])
-        labels = batch["labels"][:, 0] == pos_token
-        # print(predictions, labels)
-        metric.add_batch(
-            predictions=predictions,
-            references=labels,
-        )
-        acc_metric.add_batch(
-            predictions=predictions,
-            references=labels,
-        )      
-        # if (step + 1) % 1000 == 0:
-eval_metric = metric.compute()
-accuracy = acc_metric.compute()
-print(f"Overall eval_metric: {eval_metric}, accuracy {accuracy}")
-# exit()
-# # TEST SANITY
-# from partitioner import GPTModelPipe, get_attn_mask
-# from transformers import BatchEncoding
-# from helpers import test_parameters_consistency
-
-# user = os.path.expanduser("~")
-
-# model_gold = AutoModelForSequenceClassification.from_pretrained("/jmain01/home/JAD003/sxr06/lxx22-sxr06/model-finetune/outputs/gpt-neo-2.7B/QQP/checkpoint-1350/").cpu()
-# model_gold.eval()
-# model_gold.config.pad_token_id = 50256
-# model_test = GPTModelPipe(model_gold.config, "classification", model_gold).cpu()
-# model_test.eval()
-
-# model_test.config.pad_token_id = 50256
-
-# # test_parameters_consistency(model_gold, model_test)
-
-# with torch.no_grad():
-#     for step, batch in enumerate(tqdm(eval_dataloader)):
-#         batch = BatchEncoding(batch).to("cpu")
-#         input_ids = batch['input_ids']
-#         attention_mask = batch['attention_mask']
-#         labels = batch['labels']
-
-#         output_gold = model_gold(**batch, output_hidden_states=True)
-#         hidden_states_gold = output_gold.hidden_states
-#         logits_gold = output_gold.logits.detach().cpu().numpy()
-
-#         # args = (input_ids, attention_mask)
-#         hidden_states_test = []
-#         for i in range(34):
-#             model_test.exec_map = (i,i+1)
-#             if i == 0:
-#                 output = model_test.forward_layers((input_ids, get_attn_mask(attention_mask)))
-#             else:
-#                 output = model_test.forward_layers((hidden_states_test[-1], input_ids, get_attn_mask(attention_mask)))
-#             if i != 33:
-#                 hidden_states_test.append(output)
-#             else:
-#                 logits_test = output.detach().cpu().numpy()
-        
-#         # output_test, hidden_states_test = model_test((input_ids, attention_mask), output_hidden_states=True)
-#         # logits_test = output_test.detach().cpu().numpy()
-        
-#         # hidden_states_test = output_test[1]
-#         print("logits_gold", logits_gold)
-#         print("logits_test", logits_test)
-#         print(logits_gold-logits_test)
-#         print(len(hidden_states_test), len(hidden_states_gold))
-#         assert len(hidden_states_test) == len(hidden_states_gold)
-#         for i in range(len(hidden_states_gold)):
-#             print(i, hidden_states_gold[i]-hidden_states_test[i])
-#             assert np.all(np.isclose(
-#                 hidden_states_gold[i].detach().cpu().numpy(),
-#                 hidden_states_test[i].detach().cpu().numpy()
-#             ))
-
-#         assert np.all(np.isclose(
-#             logits_gold,
-#             logits_test
-#         ))
-
-#         break
+m = torch.nn.Softmax(dim=-1)
+device = "cuda:0"
 
 
+# def agg_logits(hist, curr, pos, device):
+#     if hist is not None:
+#         hist = hist.to(device)
+#         return (hist * pos + curr) / (pos+1)
+#     return curr
 
+model_probs = dict(zip(model_keys, [list() for _ in range(n_models)]))
+model_outputs = dict(zip(model_keys, [list() for _ in range(n_models)]))
+model_latency = dict(zip(model_keys, [list() for _ in range(n_models)]))
 
-for i, model_name in enumerate(model_keys):
-    meta[model_name] = {
+HOST = "localhost:8000"
+PARALLEL = 1
+
+# ============ RESET MODELS ==================
+
+with open(meta_path, "r") as fp:
+    meta = json.load(fp)
+
+for pos, key in enumerate(model_keys):
+    meta[models[key]] = {
         "threshold": 0.0,
         "temperature": 1.0,
+        "ensemble_pos": pos,
     }
 
 with open(meta_path, "w") as fp:
     json.dump(meta, fp)
-    time.sleep(10)
+    time.sleep(12)
 
-for i, model_name in enumerate(model_keys):
-    meta[model_name] = {
-        "threshold": 0.0,
-        "temperature": 1.0,
-        "energy": model_energy[i], # HACK
-        "labels": [],
-        "outputs": [],
-        "metric": load_metric("glue", args.task_name),
-        "acc": load_metric("accuracy"),
-    }
 
-# with open(meta_path, "w") as fp:
-#     json.dump(meta, fp)
+num_train_labels = train_len
+num_test_labels = len(eval_dataset) - train_len
+model_metrics = {}
+for key in model_keys:
+    model_metrics[key] = load_metric(
+        args.data_args.dataset_name, args.data_args.task_name
+    )
 
-# random.seed(0)
-# torch.manual_seed(0)
+correct_cnt = dict(zip(model_keys, [0] * n_models))
+correct_prob = dict(zip(model_keys, [0] * n_models))
 
-if args.task_name is not None:
-    metric = load_metric("glue", args.task_name)
-else:
-    metric = load_metric("accuracy")
+model_metrics = {}
+for key in model_keys:
+    model_metrics[key] = load_metric(
+        args.data_args.dataset_name, args.data_args.task_name
+    )
 
-with httpclient.InferenceServerClient("dgj101:8000", concurrency=8) as client:
-    for step, batch in tqdm(enumerate(eval_dataloader), desc="Requesting"):
-        if step > 1000: break
-        input_ids = batch['input_ids'].numpy()
-        attention_mask = batch['attention_mask'].numpy()
-        inputs = [
-            httpclient.InferInput("input_ids", input_ids.shape,
-                            np_to_triton_dtype(input_ids.dtype)),
-            httpclient.InferInput("attention_mask", attention_mask.shape,
-                            np_to_triton_dtype(attention_mask.dtype)),
-        ]
+with httpclient.InferenceServerClient(HOST, concurrency=PARALLEL) as client:
+    for step, batch in tqdm(
+        enumerate(train_dataloader), desc="Get Temperature Train Logits"
+    ):
+        # input_ids=batch['input_ids']
+        # attention_mask=batch['attention_mask']
+        label = batch["labels"][:, 0] == label_tokens[-1]
+        # label = label.to(torch.int64)
 
-        inputs[0].set_data_from_numpy(input_ids)
-        inputs[1].set_data_from_numpy(attention_mask)
+        labels_list.append(label)
 
-        outputs = [
-            httpclient.InferRequestedOutput("outputs"),
-        ]
+        true_ans = label.cpu().detach().numpy().flatten()
 
-        for model_name in model_keys:
+        for i, key in enumerate(model_keys):
+            triton_batch = prepare_query(batch, i)
+            logits = model_inference(client, models[key], triton_batch)
+            model_ans = np.argmax(logits, axis=-1)
+            logits = torch.Tensor(logits).to(device)
+            # print(key, logits)
+            model_outputs[key].append(logits)
 
-            response = client.infer(model_name,
-                                inputs,
-                                request_id=str(1),
-                                outputs=outputs)
-
-            result = response.get_response()
-            logits = response.as_numpy("outputs")
-            # print(logits)
-            if logits.shape[1] == 1:
-                predictions = np.where(logits > 0.5, 1, 0).flatten()
-            else:
-                predictions = logits.argmax(axis=1) if not is_regression else logits.reshape((-1,1))
-            # print(predictions, batch["labels"])
-            labels = batch["labels"][:, 0] == pos_token
-            meta[model_name]['metric'].add_batch(
-                predictions=predictions,
-                references=labels,
+            model_metrics[key].add_batch(
+                predictions=model_ans,
+                references=true_ans,
             )
-            meta[model_name]['acc'].add_batch(
-                predictions=predictions,
-                references=labels,
+    for key in model_keys:
+        logger.info("%s train metrics %s", key, model_metrics[key].compute())
+
+    for step, batch in tqdm(
+        enumerate(test_dataloader), desc="Eval without Temperature"
+    ):
+        label = batch["labels"][:, 0] == label_tokens[-1]
+        true_ans = label.cpu().detach().numpy().flatten()
+
+        for i, key in enumerate(model_keys):
+            triton_batch = prepare_query(batch, i)
+            start_time = time.perf_counter()
+            logits = model_inference(client, models[key], triton_batch)
+            end_time = time.perf_counter()
+
+            model_ans = np.argmax(logits, axis=-1)
+
+            model_metrics[key].add_batch(
+                predictions=model_ans,
+                references=true_ans,
             )
 
-            meta[model_name]['labels'].append(labels)
-            meta[model_name]['outputs'].append(logits)
-        
-        # labels_list = torch.Tensor(np.concatenate(labels_list)).long()
-        # outputs_list = torch.Tensor(np.concatenate(outputs_list))
-        
+            model_latency[key].append((end_time - start_time) * 1000)
 
-        # meta[model_name]['labels'] = labels_list
-        # meta[model_name]['outputs'] = outputs_list        
-for model_name in model_keys:
-    eval_metric = meta[model_name]['metric'].compute()
-    accuracy = meta[model_name]['acc'].compute()
-    print(f"{model_name} eval_metric: {eval_metric}, accuracy: {accuracy}")
+            probabilities = softmax(logits, -1)
+            correct_prob[key] += np.sum(np.max(probabilities, axis=-1))
+            correct_cnt[key] += np.count_nonzero(model_ans == true_ans)
 
-for model_name in model_keys:
+from scipy import stats
 
-    meta[model_name]['labels'] = torch.Tensor(np.concatenate(meta[model_name]['labels'])).long()
-    meta[model_name]['outputs'] = torch.Tensor(np.concatenate(meta[model_name]['outputs']))
+for key in model_keys:
+    logger.info(
+        "%s latency summary %s \n %s",
+        key,
+        models[key],
+        stats.describe(model_latency[key]),
+    )
+    sns.distplot(
+        model_latency[key],
+        hist=True,
+        kde=True,
+        bins=int(180 / 5),
+        label=key,
+        hist_kws={"edgecolor": "black"},
+        kde_kws={"linewidth": 4},
+    )
+plt.legend()
+plt.savefig(f"figures/model_latency_{data_args.task_name}.png", bbox_inches="tight")
+plt.close()
 
-    temperature = temperature_scaling(meta[model_name]['outputs'], meta[model_name]['labels']).squeeze().item()
-    meta[model_name]['temperature'] = temperature
-    meta[model_name]['probs'] = softmax(meta[model_name]['outputs'].numpy() / temperature, axis=1)
+labels = torch.cat(labels_list).to(device)
+labels = labels.to(torch.int64)
 
-data_size = len(meta[model_keys[0]]['labels'])
-acc = data_size / 100.0
+model_temperature = {}
+
+for key in model_keys:
+    # model_probs[key] = np.array(model_probs[key])
+    model_outputs[key] = torch.cat(model_outputs[key]).to(device)
+    # labels = labels.to(device)
+
+    temperature = (
+        temperature_scaling(model_outputs[key], labels)
+        .detach()
+        .cpu()
+        .numpy()
+        .tolist()[0]
+    )
+    # bar = 1.5
+    # temperature = bar + (temperature - bar) / 2 if temperature > bar else temperature
+    meta[models[key]]["temperature"] = temperature
+    model_temperature[key] = torch.nn.Parameter(
+        torch.ones(1, device=device) * temperature
+    )
+
+hist_logits = None
+for i, key in enumerate(model_keys):
+    model_outputs[key] = temperature_scale(model_outputs[key], model_temperature[key])
+    hist_logits = agg_logits(
+        hist_logits if key != model_keys[-1] else None, model_outputs[key], i, device
+    )
+    # hist_logits = agg_logits(None, model_outputs[key], i, model_device[key])
+    probabilities = torch.float_power(m(hist_logits).to(device), 2)
+    model_ans = torch.argmax(probabilities, dim=-1).flatten()
+
+    model_ans = model_ans.detach().cpu().numpy()
+    probabilities = probabilities.detach().cpu().numpy()
+    temp_labels = labels.detach().cpu().numpy()
+
+    model_probs[key] = np.array(
+        [
+            [p[model_ans[i]], int(model_ans[i] == temp_labels[i])]
+            for i, p in enumerate(probabilities)
+        ]
+    )
+    # model_temperature[key] = torch.nn.Parameter(torch.ones(1, device=device) * 1.15)
+
+logger.info("model_temperature %s", model_temperature)
+
+# max_reward = 0
+# min_energy = 1e10
+# mc_threshold = []
+# for th_s in np.arange(0.5, 1.0, 0.01):
+#     for th_m in np.arange(0.5, 1.0, 0.01):
+#         for th_l in np.arange(0.5, 1.0, 0.01):
+#             threshold = [th_s, th_m, th_l]
+#             mask = np.array([False] * num_train_labels)
+#             reward = 0
+#             energy = 0
+#             for i, key in enumerate(model_keys):
+#                 processed = (
+#                     (model_probs[key][:, 0] >= threshold[i])
+#                     if key in model_keys[:-1]
+#                     else np.array([True] * num_train_labels)
+#                 )
+#                 # reward += np.sum(model_probs[key][(~mask) & processed, 1])
+#                 reward += np.around(np.sum(model_probs[key][(~mask) & processed, 0]) / 8.0) * 8
+#                 energy += model_energy[key] * np.count_nonzero(
+#                     ~mask
+#                     )
+#                 mask |= processed
+#             if reward > max_reward or (reward == max_reward and min_energy > energy):
+#                 mc_threshold = copy.deepcopy(threshold)
+#                 max_reward = reward
+#                 min_energy = energy
+#                 print(mc_threshold, max_reward, min_energy)
+
 
 def total_reward(threshold):
     reward = 0
     energy = 0
-    mask = np.array([False]*data_size)
+    mask = np.array([False] * num_train_labels)
     for i, key in enumerate(model_keys):
-        processed = (meta[key]['probs'][~mask, 0] >= threshold[i]
-                        ) if key in model_keys[:-1] else np.array([True]*data_size)
-        # correct_count = np.sum(
-        #     model_probs[key][(~mask) & processed, 1])
-        reward += np.around(np.sum(meta[key]['probs'][(~mask) & processed, 1]) / acc) * acc
-        # reward += np.around(correct_count /
-        #                     (int(correct_count * 0.025) + 1)) * (int(correct_count * 0.025) + 1)
-        energy += model_energy[i] * np.count_nonzero(~mask)
+        processed = (
+            (model_probs[key][:, 0] >= threshold[i])
+            if key in model_keys[:-1]
+            else np.array([True] * num_train_labels)
+        )
+        reward += np.around(np.sum(model_probs[key][(~mask) & processed, 0]) / 8.0) * 8
+        # reward += np.sum(model_probs[key][(~mask) & processed, 1])
+        energy += model_energy[key] * np.count_nonzero(
+            ~mask
+        )  # np.count_nonzero((~mask) & processed)
         mask |= processed
+    # print((reward, -energy))
     return (reward, -energy)
 
-# def total_reward(threshold):
-#     reward = 0
-#     energy = 0
-#     mask = np.array([False]*data_size)
-#     for i, key in enumerate(model_keys):
-#         processed = (meta[key]['probs'][~mask, 0] >= threshold[i]
-#                         ) if key in model_keys[:-1] else np.array([True]*data_size)
-#         reward += np.sum(meta[key]['probs'][(~mask) & processed, 1])
-#         energy += model_energy[i] * np.count_nonzero(~mask)
-#         mask |= processed
-#     return (reward, -energy)
 
-
-# dtype = [('reward', float), ('energy', float)]
-# candidate_th = np.linspace(0.5, 1.0, num=500, endpoint=True)
-# rewards = np.array([total_reward([th]) for th in candidate_th], dtype=dtype)
-# tops = 40
-# idx = np.argpartition(rewards, -tops, order=[d[0] for d in dtype])[-tops:]
-# rewards = rewards[idx] 
-# candidate_th = candidate_th[idx]
-
-# print("rewards", rewards)
-# print("candidate_th", candidate_th)
-
-# mc_threshold = [np.min(candidate_th)]
-
-n_models = len(model_keys)        
 threshold_bounds = monte_carlo_bounds(
     total_reward,
-    [(0.8, 1.0)] * (n_models-1),
-    [('reward', float), ('energy', float)],
+    [(0.5, 1.0)] * (n_models - 1),
+    [("reward", float), ("energy", float)],
     n=10000,
     tops=40,
-    maxiter=15,
+    maxiter=30,
 )
-mc_threshold = np.min(
-    threshold_bounds, axis=1
-)
+mc_threshold = np.mean(threshold_bounds, axis=1)
+logger.info("Threshold Bounds %s", threshold_bounds)
+
+logger.info("  Num examples = %s", num_test_labels)
+logger.info("  Threshold = %s", mc_threshold)
+# for key in model_keys:
+#     logger.info("final temperature %s", models[key].temperature)
+logger.info("***** Eval results *****")
+for key in model_keys:
+    logger.info(
+        "%s correct count %s, percent %s, prob %s",
+        key,
+        correct_cnt[key],
+        np.around(correct_cnt[key] / float(num_test_labels) * 100, 3),
+        correct_prob[key],
+    )
+    logger.info("%s metrics %s", key, model_metrics[key].compute())
 
 for i, key in enumerate(model_keys):
-    meta[key]["threshold"] = mc_threshold[i] if key in model_keys[:-1] else 0.0
-    del meta[key]["labels"]
-    del meta[key]["outputs"]
-    del meta[key]["probs"]
-    del meta[key]["metric"]
-    del meta[key]["acc"]
+    meta[models[key]]["threshold"] = mc_threshold[i] if key in model_keys[:-1] else 0.0
 
 with open(meta_path, "w") as fp:
     json.dump(meta, fp)
-    time.sleep(10)
+    time.sleep(12)
 
+# -------------  Evaluation WITH Temperature --------------
 
-# Overall Acc
-metric = load_metric("glue", args.task_name)
-acc_metric = load_metric("accuracy")
-with httpclient.InferenceServerClient("127.0.0.1:8000", concurrency=8) as client:
-    for step, batch in tqdm(enumerate(eval_dataloader), desc="Requesting"):
-        # if step > 1000: break
-        input_ids = batch['input_ids'].numpy()
-        attention_mask = batch['attention_mask'].numpy()
-        inputs = [
-            httpclient.InferInput("input_ids", input_ids.shape,
-                            np_to_triton_dtype(input_ids.dtype)),
-            httpclient.InferInput("attention_mask", attention_mask.shape,
-                            np_to_triton_dtype(attention_mask.dtype)),
-        ]
+total_metrics = load_metric(args.data_args.dataset_name, args.data_args.task_name)
+total_accuracy = load_metric("accuracy")
+total_time = []
+with httpclient.InferenceServerClient(HOST, concurrency=PARALLEL) as client:
+    for step, batch in tqdm(enumerate(test_dataloader), desc="Testing Accuracy"):
+        label = (batch["labels"][:, 0] == label_tokens[-1]).to(torch.int64)
+        triton_batch = prepare_query(batch, 0)
+        start_time = time.perf_counter()
+        logits = model_inference(client, models[model_keys[0]], triton_batch)
+        end_time = time.perf_counter()
+        logits = torch.Tensor(logits).to(device)
+        probabilities = np.power(m(logits).cpu().detach().numpy(), 2)
 
-        inputs[0].set_data_from_numpy(input_ids)
-        inputs[1].set_data_from_numpy(attention_mask)
+        if step > 5:
+            total_time.append((end_time - start_time) * 1000)
 
-        outputs = [
-            httpclient.InferRequestedOutput("outputs"),
-        ]
-        response = client.infer(model_keys[0],
-                            inputs,
-                            request_id=str(1),
-                            outputs=outputs)
+        model_ans = np.argmax(probabilities, axis=-1)
+        true_ans = label.cpu().detach().numpy().flatten()
 
-        result = response.get_response()
-        logits = response.as_numpy("outputs")
-        # print(logits)
-        if logits.shape[1] == 1:
-            predictions = np.where(logits > 0.5, 1, 0).flatten()
-        else:
-            predictions = logits.argmax(axis=1) if not is_regression else logits.reshape((-1,1))
-        # print(predictions, batch["labels"])
-        metric.add_batch(
-            predictions=predictions,
-            references=batch["labels"][:, 0] == pos_token,
+        total_metrics.add_batch(
+            predictions=model_ans,
+            references=true_ans,
         )
-        acc_metric.add_batch(
-            predictions=predictions,
-            references=batch["labels"][:, 0] == pos_token,
-        )     
+        total_accuracy.add_batch(
+            predictions=model_ans,
+            references=true_ans,
+        )
 
-        # if (step + 1) % 1000 == 0:
-eval_metric = metric.compute()
-accuracy = acc_metric.compute()
-print(f"Overall eval_metric: {eval_metric}, accuracy: {accuracy}")
+logger.info(
+    "total latency summary\n %s",
+    stats.describe(total_time),
+)
+sns.distplot(
+    total_time,
+    hist=True,
+    kde=True,
+    bins=int(180 / 5),
+    label="TOTAL",
+    hist_kws={"edgecolor": "black"},
+    kde_kws={"linewidth": 4},
+)
+plt.legend()
+plt.savefig(f"figures/total_latency_{data_args.task_name}_skip.png", bbox_inches="tight")
+plt.close()
+
+logger.info("***** Collaborative Eval results *****")
+logger.info("Collaborative metrics %s", total_metrics.compute())
+logger.info("Collaborative accuracy %s", total_accuracy.compute())
+# for key in model_keys:
+#     logger.info(
+#         "%s process count %s, correct count %s, percent %s, prob %s",
+#         key,
+#         process_cnt[key],
+#         coop_cnt[key],
+#         np.around(coop_cnt[key] / float(process_cnt[key]) * 100, 3)
+#         if process_cnt[key] != 0
+#         else 0,
+#         process_prob[key],
+#     )

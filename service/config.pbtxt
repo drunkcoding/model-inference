@@ -1,0 +1,46 @@
+name: "MODEL_TASK"
+backend: "python"
+
+input [
+  {
+    name: "input_ids"
+    data_type: TYPE_INT64
+    dims: [ TOKEN_INPUT_DIM ]
+  },
+  {
+    name: "attention_mask"
+    data_type: TYPE_INT64
+    dims: [ TOKEN_INPUT_DIM ]
+  },
+  {
+    name: "ensemble_outputs"
+    data_type: TYPE_FP32
+    dims: [ SCORE_OUTPUT_DIM ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ NUM_ENSEMBLE, -1 ]
+  }
+]
+
+output [
+  {
+    name: "outputs"
+    data_type: TYPE_FP32
+    dims: [ SCORE_OUTPUT_DIM ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ NUM_ENSEMBLE, -1 ]
+  }
+]
+
+instance_group [
+  {
+    count: NUM_REPLICA
+    kind: KIND_GPU
+    gpus: [ DEVICE_MAP ]
+  }
+]

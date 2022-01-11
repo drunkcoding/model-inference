@@ -1,0 +1,46 @@
+name: "t5-base-lm-adapt_cola"
+backend: "python"
+
+input [
+  {
+    name: "input_ids"
+    data_type: TYPE_INT64
+    dims: [ -1,128 ]
+  },
+  {
+    name: "attention_mask"
+    data_type: TYPE_INT64
+    dims: [ -1,128 ]
+  },
+  {
+    name: "ensemble_outputs"
+    data_type: TYPE_FP32
+    dims: [ -1,2 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 4, -1 ]
+  }
+]
+
+output [
+  {
+    name: "outputs"
+    data_type: TYPE_FP32
+    dims: [ -1,2 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 4, -1 ]
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 0 ]
+  }
+]
