@@ -1,4 +1,4 @@
-name: "t5-base-lm-adapt_sst2"
+name: "t5-xl-lm-adapt_cola_part1"
 backend: "python"
 
 input [
@@ -15,7 +15,7 @@ input [
   {
     name: "ensemble_outputs"
     data_type: TYPE_FP32
-    dims: [ -1,2 ]
+    dims: [ -1, 128, 2048 ]
   },
   {
     name: "batch_mask"
@@ -28,7 +28,7 @@ output [
   {
     name: "outputs"
     data_type: TYPE_FP32
-    dims: [ -1,2 ]
+    dims: [ -1, 2 ]
   },
   {
     name: "batch_mask"
@@ -39,8 +39,8 @@ output [
 
 instance_group [
   {
-    count: 2
+    count: 1
     kind: KIND_GPU
-    gpus: [ 0 ]
+    gpus: [ 1 ]
   }
 ]

@@ -54,7 +54,7 @@ class TritonPythonModel:
           * model_name: Model name
         """
 
-        self.logger = Logger(__file__, "debug", 5000000, 5)
+        self.logger = Logger(__file__, "info", 5000000, 5)
 
         # You must parse model_config. JSON string is not parsed here
         self.model_config = model_config = json.loads(args["model_config"])
@@ -94,14 +94,13 @@ class TritonPythonModel:
         self.cls_model = MODEL_TASK_TO_CLASS[model_task][model_type].from_pretrained(
             model_name_or_path
         )
-
+        self.cls_model.eval()
         # self.cls_model = load_state_dict_from_zero_checkpoint(self.cls_model, model_name_or_path)
 
         if self.model_parallel:
             self.cls_model = T5Pipe(self.cls_model, self.exec_map).to(self.device)
         else:
             self.cls_model = self.cls_model.to(self.device)
-        self.cls_model.eval()
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -194,7 +193,6 @@ class TritonPythonModel:
     #     return mask, max_prob.flatten()
 
     def t5_parallel_inference(self, input_ids, attention_mask, ensemble_outputs):
-        batch_size = input_ids.shape[0]
         outputs = self.cls_model(
             (
                 None if self.parallel_pos == 0 else ensemble_outputs,
@@ -207,7 +205,7 @@ class TritonPythonModel:
         )
 
         if self.parallel_pos == self.parallel_stages - 1:
-            logits = outputs[1].view(batch_size, -1)[:, self.label_tokens]
+            logits = outputs[1][:, self.label_tokens]
             logits = temperature_scale(logits, self.temperature)
         else:
             return outputs[0]
@@ -246,9 +244,9 @@ class TritonPythonModel:
             local_mask = batch_mask[self.ensemble_pos]
             self.logger.debug("local_mask %s", local_mask)
 
-            # if self.model_parallel and self.parallel_pos > 0:
-            #     ensemble_outputs = ensemble_outputs.reshape(input_ids.shape + (self.cls_model.embed_dim, ))
-            #     print("ensemble_outputs", ensemble_outputs.shape)
+            if self.model_parallel and self.parallel_pos > 0:
+                ensemble_outputs = ensemble_outputs.reshape(input_ids.shape + (self.cls_model.embed_dim, ))
+                print("ensemble_outputs", ensemble_outputs.shape)
 
             if torch.any(local_mask):
                 outputs = self.model_inference(
@@ -274,7 +272,7 @@ class TritonPythonModel:
                             "%s batch_mask updated %s", self.model_name, batch_mask
                         )
                 if self.model_parallel and self.parallel_pos < self.parallel_stages - 1:
-                    ensemble_outputs = outputs
+                    ensemble_outputs = outputs.flatten()
 
             assert torch.sum(batch_mask) == input_ids.shape[0]
             self.logger.debug(
@@ -300,13 +298,12 @@ class TritonPythonModel:
 
     def parse_input(self, request, field):
         input = pb_utils.get_input_tensor_by_name(request, field).as_numpy()
-        # input = torch.as_tensor(input).type(np_to_torch_dtype(input.dtype))
-        # input = input.to(self.device)
-        input_zero_copy = torch.as_tensor(input, dtype=np_to_torch_dtype(input.dtype), device=self.device)
+        input = torch.Tensor(input).type(np_to_torch_dtype(input.dtype))
+        input = input.to(self.device)
 
-        self.logger.debug("%s %s %s", field, input_zero_copy.shape, input_zero_copy.device)
+        self.logger.debug("%s %s %s", field, input.shape, input.device)
 
-        return input_zero_copy
+        return input
 
     def parse_output(self, output, field):
         output_config = pb_utils.get_output_config_by_name(self.model_config, field)

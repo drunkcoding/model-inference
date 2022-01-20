@@ -1,0 +1,99 @@
+name: "t5_cola_ensemble_pp"
+platform: "ensemble"
+
+input [
+  {
+    name: "input_ids"
+    data_type: TYPE_INT64
+    dims: [ -1, 128 ]
+  },
+  {
+    name: "attention_mask"
+    data_type: TYPE_INT64
+    dims: [ -1, 128 ]
+  },
+  {
+    name: "ensemble_outputs"
+    data_type: TYPE_FP32
+    dims: [ -1, 2 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 4, -1 ]
+  }
+]
+
+output [
+  {
+    name: "outputs"
+    data_type: TYPE_FP32
+    dims: [ -1, 2 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 4, -1 ]
+  }
+]
+
+ensemble_scheduling {
+  step [ 
+    {
+      model_name: "t5-xl-lm-adapt_cola_part0"
+      model_version: -1
+      input_map {
+        key: "ensemble_outputs"
+        value: "ensemble_outputs"
+      }
+      input_map {
+        key: "batch_mask"
+        value: "batch_mask"
+      }
+      input_map {
+        key: "input_ids"
+        value: "input_ids"
+      }
+      input_map {
+        key: "attention_mask"
+        value: "attention_mask"
+      }
+      output_map {
+        key: "outputs"
+        value: "ensemble_3"
+      }
+      output_map {
+        key: "batch_mask"
+        value: "mask_3"
+      }
+    },
+    {
+      model_name: "t5-xl-lm-adapt_cola_part1"
+      model_version: -1
+      input_map {
+        key: "ensemble_outputs"
+        value: "ensemble_3"
+      }
+      input_map {
+        key: "batch_mask"
+        value: "mask_3"
+      }
+      input_map {
+        key: "input_ids"
+        value: "input_ids"
+      }
+      input_map {
+        key: "attention_mask"
+        value: "attention_mask"
+      }
+      output_map {
+        key: "outputs"
+        value: "outputs"
+      }
+      output_map {
+        key: "batch_mask"
+        value: "batch_mask"
+      }
+    }
+  ]
+}

@@ -9,12 +9,11 @@ tritonserver --model-repository ${BASE}/model-inference/repository/ \
 --log-warning True \
 --log-error True \
 --metrics-interval-ms 100 \
---buffer-manager-thread-count 20 \
---pinned-memory-pool-byte-size 2000000000 \
---response-cache-byte-size 2000000000 \
+--http-thread-count 10 \
+--buffer-manager-thread-count 8 \
 --allow-http True \
 --model-control-mode explicit \
---load-model t5_cola_ensemble \
+--load-model t5_cola_ensemble_pp \
 --grpc-infer-allocation-pool-size 20 &> trace.log &
 
 # --model-control-mode poll \
@@ -26,3 +25,5 @@ tritonserver --model-repository ${BASE}/model-inference/repository/ \
 # --load-model t5_sst2_ensemble \
 # --http-thread-count 10 \
 # --load-model t5-xl-lm-adapt_sst2 \
+# --pinned-memory-pool-byte-size 2000000000 \
+# --response-cache-byte-size 2000000000 \

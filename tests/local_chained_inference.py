@@ -1,5 +1,6 @@
 import copy
 import functools
+import gc
 from hfutils.constants import TASK_TO_LABELS
 from seaborn.distributions import histplot
 import torch
@@ -95,8 +96,8 @@ energy_discount_factor = [
 # ]
 
 model_paths = [
-    # f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-5540",
-    f"{base_dir}/google/t5-small-lm-adapt/qqp",
+    f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-5540",
+    # f"{base_dir}/google/t5-small-lm-adapt/qqp",
     f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-1860",
     f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-1780",
     f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-1380",
@@ -116,6 +117,9 @@ for key in model_keys:
     )  # if key != "S" else DistilBertForSequenceClassification.from_pretrained(model_paths[key])
     models[key] = models[key].to(model_device[key])
     models[key].eval()
+
+    torch.cuda.empty_cache()
+    gc.collect()
 
 logger.info("model loaded")
 
@@ -137,16 +141,16 @@ else:
 
 train_len = int(len(eval_dataset) * 0.4)
 
-train, test = Dataset.from_dict(eval_dataset[:train_len]), Dataset.from_dict(
-    eval_dataset[train_len:]
-)
+train = Dataset.from_dict(eval_dataset[:train_len])
+test = eval_dataset
+# test = Dataset.from_dict(eval_dataset[train_len:])
 print(train, test)
 
 train_dataloader = DataLoader(
     train,
     shuffle=True,
     collate_fn=data_collator,
-    batch_size=8,
+    batch_size=data_args.train_bsz,
     # drop_last=True,
 )
 
@@ -154,7 +158,7 @@ test_dataloader = DataLoader(
     test,
     shuffle=True,
     collate_fn=data_collator,
-    batch_size=8,
+    batch_size=data_args.eval_bsz,
     # drop_last=True,
 )
 
@@ -457,9 +461,11 @@ th_stats = dict(zip(model_keys, [list() for _ in range(n_models)]))
 
 model_metrics = {}
 for key in model_keys:
-    model_metrics[key] = load_metric(
-        args.data_args.dataset_name, args.data_args.task_name
-    )
+    # model_metrics[key] = load_metric(
+    #     args.data_args.dataset_name, args.data_args.task_name
+    # )
+    model_metrics[key] = load_metric("matthews_correlation")
+
 
 total_metrics = load_metric(args.data_args.dataset_name, args.data_args.task_name)
 f1_metrics = load_metric("f1")
