@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+tritonserver/
+figures/
+*.log*
+
 # C extensions
 *.so
 *.onnx

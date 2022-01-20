@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package inference;
+
+service Coordinator {
+    rpc ReportMeta (ReportMetaRequest) returns (SimpleResponse);
+    rpc ComputeMeta (ComputeMetaRequest) returns (SimpleResponse);
+}
+
+message ComputeMetaRequest {
+    repeated string model_list = 1;
+};
+
+message ReportMetaRequest {
+    string model_name = 1;
+    uint32 num_query = 2;
+    float energy = 3;
+    string labels_path = 10;
+    string outputs_path = 11;
+};
+
+// every response must contain this field
+message ResponseCode {
+    RetCode retcode = 1;                 // return code
+    string error_message = 2;          // non-empty when return code is not zero
+};
+
+message SimpleResponse {
+    ResponseCode rc = 1;
+};
+
+enum RetCode {
+    SUCCESS  = 0;
+    ERR_MISMATCH_MESSAGE = -100;
+    ERR_NOT_INITIALIZED = -200;
+    ERR_DATA_INCOMPLETE = -300;
+}
