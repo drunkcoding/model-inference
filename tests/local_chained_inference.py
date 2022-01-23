@@ -23,7 +23,7 @@ import sys
 
 from torch.nn.modules.activation import Threshold
 
-from datasets import Dataset
+from datasets import Dataset, concatenate_datasets
 from datasets import load_dataset, load_metric
 
 from tqdm import tqdm
@@ -62,8 +62,8 @@ label_tokens = [
 # print(tokenizer(list(TASK_TO_LABELS[task_name])).input_ids)
 # exit()
 
-home_dir = "/sata_disk/jupyter-xue"
-base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs"))
+base_dir = "/mnt/yavin/checkpoints"
+# base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs"))
 
 model_keys = [
     "S",
@@ -98,9 +98,9 @@ energy_discount_factor = [
 model_paths = [
     f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-5540",
     # f"{base_dir}/google/t5-small-lm-adapt/qqp",
-    f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-1860",
-    f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-1780",
-    f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-1380",
+    # f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-1860",
+    # f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-1780",
+    # f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-1380",
 ]
 
 model_energy = dict(zip(model_keys, energy_discount_factor))
@@ -110,7 +110,7 @@ model_device = dict(zip(model_keys, device_map))
 logger = Logger(__file__, "info", 5000000, 5)
 
 models = dict()
-for key in model_keys:
+for key in model_paths:
     logger.debug("key %s, path %s, device %s", key, model_paths[key], model_device[key])
     models[key] = T5ForConditionalGeneration.from_pretrained(
         model_paths[key]
@@ -177,7 +177,6 @@ print("temperature loaded")
 n_models = len(model_keys)
 num_labels = 0
 
-
 def model_inference(model, batch, temperature=None, device="cuda:0"):
     input_ids = batch["input_ids"]
     attention_mask = batch["attention_mask"]
@@ -194,6 +193,33 @@ def model_inference(model, batch, temperature=None, device="cuda:0"):
     if temperature is not None:
         logits = temperature_scale(logits, temperature)
     return logits
+
+long_dataset = concatenate_datasets([eval_dataset] * 10)
+
+for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
+    # for batch_size in [32, 64, 128, 256, 512]:
+
+    metric = load_metric("glue", data_args.task_name)
+    key = model_keys[0]
+
+    eval_dataloader = DataLoader(
+        eval_dataset,
+        shuffle=True,
+        collate_fn=data_collator,
+        batch_size=batch_size,
+    )
+    for batch in tqdm(train_dataloader, desc="Test Acc"):
+        logits = model_inference(models[key], batch, device=model_device[key])
+        prediction = np.argmax(logits.detach().cpu().numpy(), axis=-1)
+        label = batch["labels"][:, 0] == pos_token
+        metric.add_batch(
+            predictions=prediction,
+            references=label
+        )
+    
+    print(batch_size, metric.compute())
+
+
 
 
 model_probs = dict(zip(model_keys, [list() for _ in range(n_models)]))
