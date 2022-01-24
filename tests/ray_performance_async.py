@@ -51,7 +51,7 @@ model_tag = "ray-g1r1p0-async"
 # model_name = "t5_cola_ensemble"
 
 remote = "localhost"
-tensorboard_base = "/home/oai/share/model-inference/tritonserver/"
+tensorboard_base = "/sata_disk/jupyter-xue/model-inference/tritonserver/"
 tensorboard_logdir = os.path.join(tensorboard_base, model_tag)
 
 if data_args.pad_to_max_length:
@@ -100,12 +100,14 @@ def test_body(pid, inputs_list, label_list):
         for step, inputs in tqdm(enumerate(inputs_list), f"{pid} bsz{batch_size}-send"):
             # if step > 200:
             #     break
-            resp = requests.post(URL, json=inputs)
+            resp = requests.post(URL, json={**inputs, **{"step": step, "pid": pid}})
             try:
                 predictions = resp.json()
             except:
                 print(resp.content)
                 exit()
+            assert predictions["step"] == step
+            assert predictions["pid"] == pid
             # query_times[cnt] = (time.perf_counter() - query_times[cnt]) * 1000
             # cnt += 1
             # response = async_request.get_result()
@@ -144,11 +146,13 @@ writer_backend.remote = remote
 writer_backend.start()
 
 for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
+# for batch_size in [4, 8, 16, 32, 64, 128, 256]:
     # for batch_size in [32, 64, 128, 256, 512]:
 
     # metric = load_metric("glue", args.task_name)
 
-    c_dataset = concatenate_datasets([eval_dataset] * int(np.log2(batch_size) + 1))
+    # c_dataset = concatenate_datasets([eval_dataset] * int(np.log2(batch_size) + 1))
+    c_dataset = concatenate_datasets([eval_dataset] * 100)
 
     eval_dataloader = DataLoader(
         c_dataset,
@@ -161,7 +165,7 @@ for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
     label_list = []
     # outputs_list = []
     for step, batch in enumerate(eval_dataloader):
-        if step > 100: break
+        if step > 500: break
         inputs_dict = prepare_query(batch)
         inputs_list.append(inputs_dict)
         label_list.append(

@@ -1,7 +1,9 @@
 import os
 import time
+from datasets import concatenate_datasets
 import deepspeed
 import numpy as np
+from ray import data
 from scipy import stats
 import torch
 import pandas as pd
@@ -14,15 +16,21 @@ from tqdm import tqdm
 from hfutils.logger import Logger
 from hfutils.arg_parser import HfArguments
 from hfutils.loader import ModelLoader, DatasetLoader
+from transformers.models.t5.modeling_t5 import T5Block
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
-logger = Logger(__file__, "info", 0,0)
+logger = Logger(__file__, "info", 0, 0)
 
 args = HfArguments()
 dataset_loader = DatasetLoader(args)
-eval_raw_dataset = dataset_loader.load(tokenizer=None, partition="validation", create_dataloader=False)
+eval_raw_dataset = dataset_loader.load(
+    tokenizer=None, partition="validation", create_dataloader=False
+)
+eval_raw_dataset = concatenate_datasets([eval_raw_dataset] * 10)
+
 
 class PipeDataset(Dataset):
     def __init__(self, dataset: Dataset, key: str):
@@ -35,6 +43,7 @@ class PipeDataset(Dataset):
     def __getitem__(self, i):
         return self.dataset[self.key][i]
 
+
 eval_dataset = PipeDataset(eval_raw_dataset, "input_text")
 
 model_names = [
@@ -44,8 +53,12 @@ model_names = [
     # 'distilgpt2',
     #'gpt2',
     #'EleutherAI/gpt-neo-2.7B',
-    'EleutherAI/gpt-neo-1.3B',
-    'EleutherAI/gpt-neo-125M',
+    # "EleutherAI/gpt-neo-1.3B",
+    # "EleutherAI/gpt-neo-125M",
+    "google/t5-small-lm-adapt",
+    "google/t5-base-lm-adapt",
+    "google/t5-large-lm-adapt",
+    "google/t5-xl-lm-adapt",
 ]
 
 test_cases = [
@@ -57,32 +70,57 @@ test_cases = [
 
 # model_name = args.model_args.model_name_or_path
 
-local_rank = int(os.getenv('LOCAL_RANK', '0'))
-world_size = int(os.getenv('WORLD_SIZE', '1'))
+local_rank = int(os.getenv("LOCAL_RANK", "0"))
+world_size = int(os.getenv("WORLD_SIZE", "1"))
+
 
 def run_generator(model_name, type):
     torch.cuda.empty_cache()
-    generator = pipeline('text-classification', model=model_name, device=local_rank, use_fast=True)
+    generator = pipeline(
+        "text-generation",
+        batch_size=args.data_args.eval_bsz,
+        model=model_name,
+        device=local_rank,
+        use_fast=True,
+    )
     if type == "plain":
         pass
     elif type == "half":
-        generator.model = deepspeed.init_inference(generator.model,
-                                            mp_size=world_size,
-                                            dtype=torch.half,
-                                            replace_with_kernel_inject=True,
-                                            replace_method='auto')
+        generator.model = deepspeed.init_inference(
+            generator.model,
+            mp_size=world_size,
+            dtype=torch.half,
+            # replace_with_kernel_inject=True,
+            injection_policy={
+                T5Block: ("SelfAttention.o", "EncDecAttention.o", "DenseReluDense.wo")
+            }
+            if "t5" in model_name
+            else None,
+        )
     elif type == "deepspeed":
-        generator.model = deepspeed.init_inference(generator.model,
-                                            mp_size=world_size,
-                                            dtype=torch.float,
-                                            replace_with_kernel_inject=True,
-                                            replace_method='auto')
+        generator.model = deepspeed.init_inference(
+            generator.model,
+            mp_size=world_size,
+            dtype=torch.float,
+            # replace_with_kernel_inject=True,
+            injection_policy={
+                T5Block: ("SelfAttention.o", "EncDecAttention.o", "DenseReluDense.wo")
+            }
+            if "t5" in model_name
+            else None,
+        )
     elif type == "deepspeed-moq":
-        generator.model = deepspeed.init_inference(generator.model,
-                                            mp_size=world_size,
-                                            dtype=torch.int8,
-                                            replace_with_kernel_inject=True,
-                                            replace_method='auto')
+        generator.model = deepspeed.init_inference(
+            generator.model,
+            mp_size=world_size,
+            dtype=torch.int8,
+            # replace_with_kernel_inject=True,
+            injection_policy={
+                T5Block: ("SelfAttention.o", "EncDecAttention.o", "DenseReluDense.wo")
+            }
+            if "t5" in model_name
+            else None,
+        )
     else:
         raise ValueError()
 
@@ -92,14 +130,18 @@ def run_generator(model_name, type):
     for _ in tqdm(generator(eval_dataset), f"generation {type}"):
         cnt += 1
         end_time = time.perf_counter()
-        elapsed = (end_time-start_time) * 1000
+        elapsed = (end_time - start_time) * 1000
         if cnt > 10:
             time_records.append(elapsed)
         start_time = time.perf_counter()
     time_records = np.array(time_records)
 
     model_name = args.model_args.model_name_or_path.replace("/", "_")
-    np.save(f"data/generator_latency_{model_name}_{type}_w{world_size}.npy", time_records, allow_pickle=False)
+    np.save(
+        f"data/generator_latency_{model_name}_{type}_w{world_size}.npy",
+        time_records,
+        allow_pickle=False,
+    )
 
     logger.info(
         f"{model_name} {type} latency summary\n %s",
@@ -109,6 +151,7 @@ def run_generator(model_name, type):
     stat_des = stats.describe(time_records)
 
     return time_records, stat_des
+
 
 all_stat_des = []
 
@@ -136,15 +179,21 @@ for model_name in model_names:
 
     df = pd.DataFrame(model_stats, columns=stat_des._fields, index=test_cases)
     df["model"] = model_name
-    df = df.set_index('model', append=True)
-    df.to_csv(f"data/generator_latency_{model_name}_w{world_size}.csv", header=True, index=True)
-    
+    df = df.set_index("model", append=True)
+    df.to_csv(
+        f"data/generator_latency_{model_name}_w{world_size}.csv",
+        header=True,
+        index=True,
+    )
+
     df_all.append(df)
 
     all_stat_des.append({model_name: df.to_dict()})
 
     plt.legend()
-    plt.savefig(f"figures/generator_latency_{model_name}_w{world_size}.png", bbox_inches="tight")
+    plt.savefig(
+        f"figures/generator_latency_{model_name}_w{world_size}.png", bbox_inches="tight"
+    )
     plt.close()
 
 df = pd.concat(df_all)

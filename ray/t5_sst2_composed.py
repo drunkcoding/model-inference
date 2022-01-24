@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 import functools
 import traceback
@@ -110,7 +111,7 @@ with open(serve_args.cfg, "r") as fp:
         hf_config = AutoConfig.from_pretrained(ckpt_path)
         total_pp_layers = (get_num_layers(hf_config) + 4) * 2 + 1
 
-        print(name, "num_layers", total_pp_layers)
+        # print(name, "num_layers", total_pp_layers)
 
         parallel_stages = model_config["parallel_stages"]
         pp_layers = int(total_pp_layers / parallel_stages)
@@ -132,7 +133,9 @@ with open(serve_args.cfg, "r") as fp:
                         num_stages=parallel_stages,
                         parallel_stage=p,
                         first_parallel_layer=pp_layers * p,
-                        last_parallel_layer=pp_layers * (p + 1) if p < parallel_stages -1 else total_pp_layers,
+                        last_parallel_layer=pp_layers * (p + 1)
+                        if p < parallel_stages - 1
+                        else total_pp_layers,
                         replication_options=[
                             ReplicationOptions(
                                 replica_id=r,
@@ -169,7 +172,6 @@ class T5Model:
 
         # visible_gpus = ray.get_gpu_ids()
 
-        
         self.logger.info("options: %s", options)
 
         # self.logger.info("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
@@ -180,7 +182,7 @@ class T5Model:
         )
         self.cuda_stream = torch.cuda.Stream(device=self.device)
         self.logger.debug("%s device %s", options.name, self.device)
-        
+
         self.model_name = model_name = options.name
         self.logger.debug("%s model_name %s", self.key, self.model_name)
         self.temperature = torch.nn.Parameter(
@@ -198,6 +200,7 @@ class T5Model:
 
         # self.cuda_stream = torch.cuda.Stream()
         from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
+
         model = T5ForConditionalGeneration.from_pretrained(options.ckpt_path)
         # if not "small" in model_name:
         #     model = load_state_dict_from_zero_checkpoint(model, options.ckpt_path)
@@ -209,7 +212,9 @@ class T5Model:
         # self.logger.info("%s garbage collected", model_name)
         if self.model_parallel:
             self.model = T5Pipe(model, exec_map).to(self.device)
-            self.logger.debug("%s T5Pipe num_layers %s ", model_name, len(self.model.pipe))
+            self.logger.debug(
+                "%s T5Pipe num_layers %s ", model_name, len(self.model.pipe)
+            )
             # # for i in range(len(self.model.pipe)):
             # #     print((i - 1) // (len(self.model.pipe) // len(visible_gpus)))
             # device_map = [
@@ -231,6 +236,7 @@ class T5Model:
         else:
             self.model = model.to(self.device)
         self.logger.info("%s model initialized %s", model_name, type(self.model))
+        self.model.eval()
 
         del model
         torch.cuda.empty_cache()
@@ -248,7 +254,7 @@ class T5Model:
 
         self.logger.info("%s full initialization complete", model_name)
 
-    async def t5_parallel_inference(self, input_ids, attention_mask, *args):
+    def t5_parallel_inference(self, input_ids, attention_mask, *args):
         batch_size = input_ids.shape[0]
         outputs = self.model.forward(
             (
@@ -271,7 +277,7 @@ class T5Model:
         else:
             return outputs
 
-    async def t5_inference(self, input_ids, attention_mask, *args):
+    def t5_inference(self, input_ids, attention_mask, *args):
         outputs = self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -283,7 +289,7 @@ class T5Model:
         logits = temperature_scale(logits, self.temperature)
         return logits
 
-    async def default_inference(self, input_ids, attention_mask, *args):
+    def default_inference(self, input_ids, attention_mask, *args):
         logits = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -316,18 +322,19 @@ class T5Model:
 
         with torch.cuda.stream(self.cuda_stream):
             if "t5" in self.model_name and not self.model_parallel:
-                outputs = await self.t5_inference(*masked_inputs)
+                outputs = self.t5_inference(*masked_inputs)
             elif "t5" in self.model_name and self.model_parallel:
-                outputs = await self.t5_parallel_inference(*masked_inputs)
+                outputs = self.t5_parallel_inference(*masked_inputs)
             else:
-                outputs = await self.default_inference(*masked_inputs)
+                outputs = self.default_inference(*masked_inputs)
         end_time = time.perf_counter()
         self.logger.info(
             "(%s) %s model_inference time elapsed %s (ms)",
-            self.key, self.model_name,
+            self.key,
+            self.model_name,
             (end_time - start_time) * 1000,
         )
-        # print(outputs)
+        # print(outputs.shape, isinstance(outputs, tuple))
         if isinstance(outputs, tuple):
             return tuple(
                 [
@@ -428,53 +435,103 @@ class T5Ensemble:
         # print(key, parallel_options.rr_counter)
         return serve.get_deployment(key).get_handle(sync=False)
 
-    # This method can be called concurrently!
     async def __call__(self, request):
         data = await request.json()
 
         batch_size = len(data["input_ids"])
-        # input_ids = await torch.as_tensor(data["input_ids"], dtype=torch.long, device="cuda:0")
-        # attention_mask = await torch.as_tensor(data["attention_mask"], dtype=torch.long, device="cuda:0")
         input_ids = np.array(data["input_ids"])
         attention_mask = np.array(data["attention_mask"])
         ensemble_outputs = None
-        # hist_outputs = []
-        batch_mask = np.zeros((self.num_ensembles, batch_size))
-        batch_mask[0] = np.ones(batch_size)  # WHERE TO ENTER
-        batch_mask = batch_mask.astype(bool)
 
+        step = data["step"]
+        pid = data["pid"]
+
+        # options = self.ensembles[-1]
         for idx, options in enumerate(self.ensembles):
-            local_mask = batch_mask[idx].view()
-            self.logger.debug("%s local_mask %s", options.name, local_mask)
-
-            if np.any(local_mask):
-
-                outputs = ray.put((None, None, None, None))
-                for parallel_options in options.parallel_options:
-                    handle = self.schedule_handle(options.scheduler, parallel_options)
-                    outputs = await handle.remote(
-                        input_ids[local_mask], attention_mask[local_mask], outputs
-                    )
-                outputs = ray.get(outputs)
-                
-                ensemble_outputs = self.model_ensemble(
-                    ensemble_outputs, outputs, local_mask, idx
+            outputs = ray.put((None, None, None, None))
+            for parallel_options in options.parallel_options:
+                handle = self.schedule_handle(options.scheduler, parallel_options)
+                outputs = await handle.remote(
+                    input_ids, attention_mask, outputs
                 )
+            outputs = ray.get(outputs)
+            # print(outputs)
+            if ensemble_outputs is None:
+                ensemble_outputs = copy.deepcopy(outputs)
+            else:
+                ensemble_outputs += copy.deepcopy(outputs)
 
-                local_mask, max_prob = self.offload_mask(
-                    ensemble_outputs, local_mask, idx
-                )
-                self.logger.debug("%s local_mask updated %s", options.name, local_mask)
-                if np.any(local_mask):
-                    batch_mask = self.update_batch_mask(
-                        max_prob, batch_mask, local_mask, idx
-                    )
-                    self.logger.debug(
-                        "%s batch_mask updated %s", options.name, batch_mask
-                    )
-        # assert np.sum(batch_mask) == batch_size
-        # ensemble_outputs = outputs
-        return {"labels": np.argmax(ensemble_outputs, axis=-1).flatten().tolist()}
+        return {"step": step, "pid": pid, "labels": np.argmax(ensemble_outputs, axis=-1).flatten().tolist()}
+
+
+    # # This method can be called concurrently!
+    # async def __call__(self, request):
+    #     data = await request.json()
+
+    #     batch_size = len(data["input_ids"])
+    #     # input_ids = await torch.as_tensor(data["input_ids"], dtype=torch.long, device="cuda:0")
+    #     # attention_mask = await torch.as_tensor(data["attention_mask"], dtype=torch.long, device="cuda:0")
+    #     input_ids = np.array(data["input_ids"])
+    #     input_ids.setflags(write=0)
+    #     attention_mask = np.array(data["attention_mask"])
+    #     attention_mask.setflags(write=0)
+    #     ensemble_outputs = None
+    #     # hist_outputs = []
+    #     # batch_mask = np.zeros((self.num_ensembles, batch_size))
+    #     batch_mask = np.ones((self.num_ensembles, batch_size))
+    #     # batch_mask[0, :] = 1  # WHERE TO ENTER
+    #     batch_mask = batch_mask.astype(bool)
+
+    #     for idx, options in enumerate(self.ensembles):
+    #         local_mask = batch_mask[idx]
+    #         self.logger.debug("%s local_mask %s", options.name, local_mask)
+
+            
+    #         # print(len(options.parallel_options))
+
+    #         if np.any(local_mask):
+
+    #             outputs = ray.put((None, None, None, None))
+    #             for parallel_options in options.parallel_options:
+    #                 handle = self.schedule_handle(options.scheduler, parallel_options)
+    #                 outputs = await handle.remote(
+    #                     input_ids[local_mask], attention_mask[local_mask], outputs
+    #                 )
+    #             outputs = ray.get(outputs)
+    #             print(outputs.shape, outputs)
+
+    #             ensemble_outputs = self.model_ensemble(
+    #                 ensemble_outputs, outputs, local_mask, idx
+    #             )
+
+    #             extended_mask, max_prob = self.offload_mask(
+    #                 ensemble_outputs, local_mask, idx
+    #             )
+    #             # print(
+    #             #     options.name,
+    #             #     extended_mask.size,
+    #             #     max_prob.size,
+    #             #     batch_size,
+    #             #     np.sum(extended_mask),
+    #             #     np.sum(local_mask),
+    #             # )
+    #             self.logger.debug(
+    #                 "%s local_mask updated %s", options.name, extended_mask
+    #             )
+    #             num_next_models = self.num_ensembles - idx - 1
+    #             # if np.any(extended_mask) and num_next_models > 0:
+    #             #     batch_mask[idx] &= ~extended_mask
+    #             #     batch_mask[idx+1] |= extended_mask
+    #                 # batch_mask = self.update_batch_mask(
+    #                 #     max_prob, batch_mask.copy(), extended_mask, idx
+    #                 # )
+    #                 # self.logger.debug(
+    #                 #     "%s batch_mask updated %s", options.name, batch_mask
+    #                 # )
+    #         # print(options.name, num_next_models, batch_mask)
+    #         # assert np.sum(batch_mask) == batch_size
+    #     assert ensemble_outputs.shape == (batch_size, 2)
+    #     return {"labels": np.argmax(ensemble_outputs, axis=-1).flatten().tolist()}
 
     def offload_mask(self, logits, mask, idx):
         probabilities = np.power(m(logits), 2)
@@ -486,10 +543,10 @@ class T5Ensemble:
             prob_mask,
             mask,
         )
-        combined_mask = mask & prob_mask
+        extended_mask = mask & prob_mask
         # combined_mask[mask] &= prob_mask[mask]
-        self.logger.debug("max_prob %s, combined_mask %s", max_prob, combined_mask)
-        return combined_mask, max_prob
+        self.logger.debug("max_prob %s, extended_mask %s", max_prob, extended_mask)
+        return extended_mask, max_prob
 
     # async def model_ensemble(
     #     self, hist_outputs, mask, idx
@@ -514,9 +571,10 @@ class T5Ensemble:
     def model_ensemble(self, ensemble_outputs, local_outputs, mask, idx):
         start_time = time.perf_counter()
         if ensemble_outputs is not None:
+            ensemble_weight = self.ensembles[idx].ensemble_weight
             ensemble_outputs[mask] = (
-                ensemble_outputs[mask] * (1 - self.ensembles[idx].ensemble_weight)
-                + local_outputs * self.ensembles[idx].ensemble_weight
+                ensemble_outputs[mask] * (1 - ensemble_weight)
+                + local_outputs * ensemble_weight
             )
         end_time = time.perf_counter()
         self.logger.info(
@@ -530,13 +588,16 @@ class T5Ensemble:
             ensemble_outputs,
         )
         return (
-            ensemble_outputs if ensemble_outputs is not None else np.array(local_outputs.tolist())
+            ensemble_outputs
+            if ensemble_outputs is not None
+            else local_outputs.copy()
         )  # MEMCOPY
 
     def update_batch_mask(self, max_prob, mask, local_mask, idx):
         num_next_models = self.num_ensembles - idx - 1
 
-        if num_next_models == 0: return mask
+        if num_next_models <= 0:
+            return mask
 
         if self.ensembles[idx].skip_connection:
 
