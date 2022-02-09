@@ -69,39 +69,39 @@ model_keys = [
     "S",
     "M",
     "L",
-    "XL",
+    # "XL",
 ]
 
 device_map = [
     "cuda:0",
     "cuda:0",
     "cuda:0",
-    "cuda:0",
+    # "cuda:1",
 ]
 
 energy_discount_factor = [
     1 / 40,
     3 / 40,
     10 / 40,
-    40 / 40,
+    # 40 / 40,
 ]
 
-
-# model_paths = [
-#     # f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-2420",
-#     f"{base_dir}/google/t5-small-lm-adapt/qqp",
-#     f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-820",
-#     f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-240",
-#     f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-260",
-# ]
 
 model_paths = [
-    f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-5540",
+    f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-2420",
     # f"{base_dir}/google/t5-small-lm-adapt/qqp",
-    # f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-1860",
-    # f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-1780",
-    # f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-1380",
+    f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-820",
+    f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-240",
+    # f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-260",
 ]
+
+# model_paths = [
+#     f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-5540",
+#     # f"{base_dir}/google/t5-small-lm-adapt/qqp",
+#     # f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-1860",
+#     # f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-1780",
+#     # f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-1380",
+# ]
 
 model_energy = dict(zip(model_keys, energy_discount_factor))
 model_paths = dict(zip(model_keys, model_paths))
@@ -342,7 +342,7 @@ logger.debug("model_temperature %s", model_temperature)
 # logger.info("Threshold %s", mc_threshold)
 
 
-def total_reward(threshold):
+def total_reward(threshold, model_keys):
     reward = 0
     energy = 0
     mask = np.array([False] * num_labels)
@@ -387,14 +387,23 @@ def total_reward(threshold):
 #     return (reward if reward >= max_cnt else -100000, -energy)
 
 threshold_bounds = monte_carlo_bounds(
-    total_reward,
-    [(0.5, 1.0)] * (n_models - 1),
+    functools.partial(total_reward, model_keys=model_keys[:-1]),
+    [(0.5, 1.0)] * (n_models - 1 - 1),
     [("reward", float), ("energy", float)],
     n=10000,
     tops=40,
     maxiter=30,
 )
 mc_threshold = np.mean(threshold_bounds, axis=1)
+# threshold_bounds = monte_carlo_bounds(
+#     functools.partial(total_reward, model_keys=model_keys[-2:]),
+#     [(0.5, 1.0)],
+#     [("reward", float), ("energy", float)],
+#     n=10000,
+#     tops=40,
+#     maxiter=30,
+# )
+# mc_threshold = np.append(mc_threshold, np.mean(threshold_bounds, axis=1))
 logger.info("Threshold Bounds %s", threshold_bounds)
 
 # mc_threshold = np.array(mc_threshold) * np.linspace(0.95, 0.98, num=n_models-1, endpoint=True)[::-1]

@@ -6,6 +6,7 @@ from hfutils.constants import TASK_TO_LABELS
 from hfutils.loader import DatasetLoader, ModelLoader
 from numpy import random
 from packaging.version import parse
+import ray
 import torch
 from transformers.data.data_collator import (
     DataCollatorForSeq2Seq,
@@ -17,6 +18,7 @@ from scipy.special import softmax
 import time
 import multiprocessing as mp
 import requests
+from ray import serve
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -79,12 +81,26 @@ label_tokens = [
     if label is not None
 ]
 
+# ray.init("localhost:8000", namespace="t5-sst2")
+
 NUM_PROC = 4
 barrier = mp.Barrier(NUM_PROC)
 URL = "http://127.0.0.1:8000/composed"
-
-
+s_URL = "http://127.0.0.1:8000/SR0P0"
+m_URL = "http://127.0.0.1:8000/MR0P0"
+l_URL = "http://127.0.0.1:8000/LR0P0"
 # np.random.seed(42)
+
+def query_server(url, data):
+    resp = requests.post(url, json=data)
+    try:
+        outputs = resp.json()
+    except:
+        print(resp.content)
+        exit()
+
+    return outputs
+
 
 def test_body(pid, inputs_list, label_list):
     print(pid)
@@ -100,14 +116,28 @@ def test_body(pid, inputs_list, label_list):
         for step, inputs in tqdm(enumerate(inputs_list), f"{pid} bsz{batch_size}-send"):
             # if step > 200:
             #     break
-            resp = requests.post(URL, json={**inputs, **{"step": step, "pid": pid}})
-            try:
-                predictions = resp.json()
-            except:
-                print(resp.content)
-                exit()
-            assert predictions["step"] == step
-            assert predictions["pid"] == pid
+            json_data = {**inputs, **{"step": step, "pid": pid}}
+
+            e_outputs = query_server(URL, json_data)
+            s_outputs = query_server(s_URL, json_data)
+            m_outputs = query_server(m_URL, json_data)
+            l_outputs = query_server(l_URL, json_data)
+
+            e_logits = np.array(e_outputs["logits"])
+            s_logits = np.array(s_outputs["logits"])
+            m_logits = np.array(m_outputs["logits"])
+            l_logits = np.array(l_outputs["logits"])
+
+
+            if not np.all(np.argmax(m_logits + s_logits + l_logits, axis=-1) == np.argmax(e_logits, axis=-1)):
+                print(s_logits, m_logits, l_logits, s_logits + m_logits + l_logits,e_logits)
+            # else:
+            #     print(s_logits, m_logits, l_logits)
+            
+            # assert np.all(np.isclose(m_logits + s_logits, e_logits))
+            # assert np.all(np.argmax(m_logits + s_logits, axis=-1) == np.argmax(e_logits, axis=-1))
+            assert e_outputs["step"] == step
+            assert e_outputs["pid"] == pid
             # query_times[cnt] = (time.perf_counter() - query_times[cnt]) * 1000
             # cnt += 1
             # response = async_request.get_result()
@@ -117,7 +147,7 @@ def test_body(pid, inputs_list, label_list):
             # print(predictions, label_list[idx])
 
             metric.add_batch(
-                predictions=predictions["labels"],
+                predictions=e_outputs["labels"],
                 references=label_list[step],
             )
 
@@ -152,10 +182,11 @@ for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
     # metric = load_metric("glue", args.task_name)
 
     # c_dataset = concatenate_datasets([eval_dataset] * int(np.log2(batch_size) + 1))
-    c_dataset = concatenate_datasets([eval_dataset] * 1)
+    c_dataset = concatenate_datasets([eval_dataset] * 100)
 
     eval_dataloader = DataLoader(
         c_dataset,
+        # shuffle=True,
         collate_fn=data_collator,
         batch_size=batch_size,
     )
