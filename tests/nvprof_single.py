@@ -39,15 +39,16 @@ from torch.utils.data import (
 from sklearn.model_selection import train_test_split
 
 from hfutils.logger import Logger
-from hfutils.arg_parser import HfArguments
+from hfutils.arg_parser import TestArguments
 from hfutils.loader import ModelLoader, DatasetLoader
 from hfutils.temperature_scaling import ModelWithTemperature
 from hfutils.monte_carlo import monte_carlo_bounds
 from hfutils.calibration import temperature_scale, temperature_scaling
+from hfutils.plot import sns_displot
 
 import scipy.stats as stats
 
-args = HfArguments()
+args = TestArguments()
 task_name = args.data_args.task_name
 tokenizer, _ = ModelLoader(args).load(load_model=False)
 
@@ -124,7 +125,7 @@ def model_inference(model, batch, temperature=None, device="cuda:0"):
     return logits
 
 def plot_density(data, filename):
-    sns.distplot(data, hist=True, kde=True, 
+    sns.distplot(data, hist=True, kde=False, 
                 bins=int(180/5), 
                 hist_kws={'edgecolor':'black'},
                 kde_kws={'linewidth': 2})
@@ -143,7 +144,7 @@ iters = 100
 
 # profiler.start()
 
-model_name = model_args.model_name_or_path.replace("/", "-")
+model_name = model_args.model_name_or_path.split("/")[-2]
 logger_base_name = f"trace_{model_name}"
 logger = Logger(logger_base_name, "info", 5000000, 5)
 
@@ -168,27 +169,27 @@ for batch_size in [1, 2, 4, 8, 16, 32, 64, 128]:
     )
 
     latency = []
-    for step, batch in tqdm(
-            enumerate(eval_dataloader), desc=f"Test Acc bsz{batch_size}"
-        ):
-        if (step + 1) % 10 == 0:
-            with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+        for step, batch in tqdm(
+                enumerate(eval_dataloader), desc=f"Test Acc bsz{batch_size}"
+            ):
+            if (step + 1) % 10 == 0:
                 logits = model_inference(model, batch)
-            break
-        # else:
-        #     start_time = time.perf_counter()
-        #     result = pool.apply_async(model_exec, (batch, 0))
-        #     result = pool.apply_async(model_exec, (batch, 1))
-        #     # with torch.cuda.stream(cuda_stream2):
-        #     #     logits = model_inference(model, batch)
-        #     # cuda_stream1.synchronize()
-        #     # cuda_stream2.synchronize()
-        #     torch.cuda.synchronize()
-        #     result.get()
-        #     end_time = time.perf_counter()
-        #     latency.append((end_time - start_time) * 1000)
+                # break
+            # else:
+            #     start_time = time.perf_counter()
+            #     result = pool.apply_async(model_exec, (batch, 0))
+            #     result = pool.apply_async(model_exec, (batch, 1))
+            #     # with torch.cuda.stream(cuda_stream2):
+            #     #     logits = model_inference(model, batch)
+            #     # cuda_stream1.synchronize()
+            #     # cuda_stream2.synchronize()
+            #     torch.cuda.synchronize()
+            #     result.get()
+            #     end_time = time.perf_counter()
+            #     latency.append((end_time - start_time) * 1000)
 
-        if (step + 1) == 100: break
+            if (step + 1) == 100: break
 
     
 
@@ -201,11 +202,11 @@ for batch_size in [1, 2, 4, 8, 16, 32, 64, 128]:
     # latency_npy = f"{latency_name_base}.npy"
     # latency_fig = f"{latency_name_base}.png"
 
-    prof.export_chrome_trace(trace_raw)
+    prof.export_chrome_trace(os.path.join("data",trace_raw))
 
     import json
 
-    with open(trace_raw, "r") as fp:
+    with open(os.path.join("data",trace_raw), "r") as fp:
         trace = json.load(fp)
         trace_events = trace["traceEvents"]
 
@@ -219,8 +220,8 @@ for batch_size in [1, 2, 4, 8, 16, 32, 64, 128]:
     # np.save(os.path.join("data", latency_npy), latency, allow_pickle=False)
 
     
+    # sns_displot(trace_fig, occupancy)
     plot_density(occupancy, trace_fig)
-    # plot_density(latency, latency_fig)
 
     logger.info("batch_size %s, %s", batch_size, stats.describe(occupancy))
 

@@ -46,7 +46,7 @@ from hfutils.calibration import temperature_scale, temperature_scaling
 
 
 args = HfArguments()
-task_name = args.data_args.task_name
+task_name  = args.data_args.task_name
 tokenizer, _ = ModelLoader(args).load(load_model=False)
 
 pos_token = tokenizer("false").input_ids[0]
@@ -62,38 +62,45 @@ label_tokens = [
 # print(tokenizer(list(TASK_TO_LABELS[task_name])).input_ids)
 # exit()
 
-base_dir = "/mnt/yavin/checkpoints"
-# base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs"))
+home_dir = os.path.expanduser(("~"))
+# base_dir = "/mnt/yavin/checkpoints"
+base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs", "google"))
 
 model_keys = [
     "S",
     "M",
     "L",
-    # "XL",
+    "XL",
 ]
 
 device_map = [
     "cuda:0",
     "cuda:0",
     "cuda:0",
-    # "cuda:1",
+    "cuda:0",
 ]
 
 energy_discount_factor = [
     1 / 40,
     3 / 40,
     10 / 40,
-    # 40 / 40,
+    40 / 40,
 ]
-
 
 model_paths = [
-    f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-2420",
-    # f"{base_dir}/google/t5-small-lm-adapt/qqp",
-    f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-820",
-    f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-240",
-    # f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-260",
+    f"{base_dir}/t5-small-lm-adapt/all/checkpoint-4500",
+    f"{base_dir}/t5-base-lm-adapt/all/checkpoint-2000",
+    f"{base_dir}/t5-large-lm-adapt/all/checkpoint-1500",
+    f"{base_dir}/t5-xl-lm-adapt/all/checkpoint-1500",
 ]
+
+# model_paths = [
+#     f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-2420",
+#     # f"{base_dir}/google/t5-small-lm-adapt/qqp",
+#     f"{base_dir}/t5-base-lm-adapt/{task_name}/checkpoint-820",
+#     f"{base_dir}/t5-large-lm-adapt/{task_name}/checkpoint-240",
+#     # f"{base_dir}/t5-xl-lm-adapt/{task_name}/checkpoint-260",
+# ]
 
 # model_paths = [
 #     f"{base_dir}/t5-small-lm-adapt/{task_name}/checkpoint-5540",
@@ -125,19 +132,33 @@ logger.info("model loaded")
 
 # -------------  Dataset Prepare --------------
 
-dataset_loader = DatasetLoader(args)
-# train_dataset = dataset_loader.load(tokenizer, partition="validation", create_dataloader=False)
-eval_dataset = dataset_loader.load(
-    tokenizer, partition="validation", create_dataloader=False
+from hfutils.loader import t5_preprocess_function, load_glue_val
+from functools import partial
+
+preprocess_function = partial(
+    t5_preprocess_function, 
+    tokenizer=tokenizer,
+    padding="max_length",
+    max_length=128,
 )
-logger.debug("eval_dataset %s", eval_dataset)
+
+# dataset_loader = DatasetLoader(args)
+# # train_dataset = dataset_loader.load(tokenizer, partition="validation", create_dataloader=False)
+# eval_dataset = dataset_loader.load(
+#     tokenizer, partition="validation", create_dataloader=False
+# )
+# logger.debug("eval_dataset %s", eval_dataset)
+
+eval_dataset = load_glue_val(preprocess_function).shuffle()
 
 data_args = args.data_args
 
-if data_args.pad_to_max_length:
-    data_collator = default_data_collator
-else:
-    data_collator = DataCollatorForSeq2Seq(tokenizer)
+# if data_args.pad_to_max_length:
+#     data_collator = default_data_collator
+# else:
+#     data_collator = DataCollatorForSeq2Seq(tokenizer)
+
+data_collator = DataCollatorForSeq2Seq(tokenizer)
 
 train_len = int(len(eval_dataset) * 0.4)
 
@@ -196,28 +217,28 @@ def model_inference(model, batch, temperature=None, device="cuda:0"):
 
 long_dataset = concatenate_datasets([eval_dataset] * 10)
 
-for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
-    # for batch_size in [32, 64, 128, 256, 512]:
+# for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
+#     # for batch_size in [32, 64, 128, 256, 512]:
 
-    metric = load_metric("glue", data_args.task_name)
-    key = model_keys[0]
+#     metric = load_metric("accuracy")
+#     key = model_keys[0]
 
-    eval_dataloader = DataLoader(
-        eval_dataset,
-        shuffle=True,
-        collate_fn=data_collator,
-        batch_size=batch_size,
-    )
-    for batch in tqdm(train_dataloader, desc="Test Acc"):
-        logits = model_inference(models[key], batch, device=model_device[key])
-        prediction = np.argmax(logits.detach().cpu().numpy(), axis=-1)
-        label = batch["labels"][:, 0] == pos_token
-        metric.add_batch(
-            predictions=prediction,
-            references=label
-        )
+#     eval_dataloader = DataLoader(
+#         eval_dataset,
+#         shuffle=True,
+#         collate_fn=data_collator,
+#         batch_size=batch_size,
+#     )
+#     for batch in tqdm(train_dataloader, desc="Test Acc"):
+#         logits = model_inference(models[key], batch, device=model_device[key])
+#         prediction = np.argmax(logits.detach().cpu().numpy(), axis=-1)
+#         label = batch["labels"][:, 0] == pos_token
+#         metric.add_batch(
+#             predictions=prediction,
+#             references=label
+#         )
     
-    print(batch_size, metric.compute())
+#     print(batch_size, metric.compute())
 
 
 
@@ -324,7 +345,7 @@ for i, key in enumerate(model_keys):
     )
 
 
-logger.debug("model_temperature %s", model_temperature)
+logger.info("model_temperature %s", model_temperature)
 
 # mc_threshold = []
 # for key in model_keys[:-1]:
@@ -387,8 +408,8 @@ def total_reward(threshold, model_keys):
 #     return (reward if reward >= max_cnt else -100000, -energy)
 
 threshold_bounds = monte_carlo_bounds(
-    functools.partial(total_reward, model_keys=model_keys[:-1]),
-    [(0.5, 1.0)] * (n_models - 1 - 1),
+    functools.partial(total_reward, model_keys=model_keys),
+    [(0.5, 1.0)] * (n_models - 1),
     [("reward", float), ("energy", float)],
     n=10000,
     tops=40,
@@ -499,11 +520,11 @@ for key in model_keys:
     # model_metrics[key] = load_metric(
     #     args.data_args.dataset_name, args.data_args.task_name
     # )
-    model_metrics[key] = load_metric("matthews_correlation")
+    model_metrics[key] = load_metric("accuracy")
 
 
-total_metrics = load_metric(args.data_args.dataset_name, args.data_args.task_name)
-f1_metrics = load_metric("f1")
+total_metrics = load_metric("accuracy")
+# f1_metrics = load_metric("f1")
 corr_metrics = load_metric("matthews_correlation")
 with torch.no_grad():
     for batch in tqdm(test_dataloader, desc="Testing Accuracy"):
@@ -555,10 +576,10 @@ with torch.no_grad():
                 predictions=model_ans[(~mask) & processed],
                 references=true_ans[(~mask) & processed],
             )
-            f1_metrics.add_batch(
-                predictions=model_ans[(~mask) & processed],
-                references=true_ans[(~mask) & processed],
-            )
+            # f1_metrics.add_batch(
+            #     predictions=model_ans[(~mask) & processed],
+            #     references=true_ans[(~mask) & processed],
+            # )
             corr_metrics.add_batch(
                 predictions=model_ans[(~mask) & processed],
                 references=true_ans[(~mask) & processed],
@@ -608,10 +629,10 @@ for key in model_keys:
     logger.info("%s metrics %s", key, model_metrics[key].compute())
 logger.info("***** Collaborative Eval results *****")
 logger.info(
-    "Collaborative metrics %s %s %s",
+    "Collaborative metrics %s %s",
     total_metrics.compute(),
     corr_metrics.compute(),
-    f1_metrics.compute(),
+    # f1_metrics.compute(),
 )
 for key in model_keys:
     logger.info(

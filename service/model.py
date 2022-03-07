@@ -4,6 +4,8 @@ import threading
 from datasets.utils.filelock import logger
 from torch import nn
 import torch
+from torch.utils.dlpack import to_dlpack
+from torch.utils.dlpack import from_dlpack
 import os
 import asyncio
 
@@ -302,21 +304,24 @@ class TritonPythonModel:
         input = pb_utils.get_input_tensor_by_name(request, field).as_numpy()
         # input = torch.as_tensor(input).type(np_to_torch_dtype(input.dtype))
         # input = input.to(self.device)
-        input_zero_copy = torch.as_tensor(input, dtype=np_to_torch_dtype(input.dtype), device=self.device)
+        input = from_dlpack(input.to_dlpack())
+        # input_zero_copy = torch.as_tensor(input, dtype=np_to_torch_dtype(input.dtype), device=self.device)
 
-        self.logger.debug("%s %s %s", field, input_zero_copy.shape, input_zero_copy.device)
-
-        return input_zero_copy
+        self.logger.debug("%s %s %s", field, input.shape, input.device)
+        
+        return input.to(self.device) 
+        # return input_zero_copy
 
     def parse_output(self, output, field):
-        output_config = pb_utils.get_output_config_by_name(self.model_config, field)
-        output_dtype = pb_utils.triton_string_to_numpy(output_config["data_type"])
+        return pb_utils.Tensor.from_dlpack(field, to_dlpack(output))
+        # output_config = pb_utils.get_output_config_by_name(self.model_config, field)
+        # output_dtype = pb_utils.triton_string_to_numpy(output_config["data_type"])
 
-        if isinstance(output, torch.Tensor):
-            output = output.detach().cpu().numpy()
+        # if isinstance(output, torch.Tensor):
+        #     output = output.detach().cpu().numpy()
 
-        output_pb = pb_utils.Tensor(field, output.astype(output_dtype))
-        return output_pb
+        # output_pb = pb_utils.Tensor(field, output.astype(output_dtype))
+        # return output_pb
 
     # def format_request(self, input, field):
     #     input_config = pb_utils.get_input_config_by_name(self.model_config, field)

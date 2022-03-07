@@ -31,7 +31,6 @@ eval_raw_dataset = dataset_loader.load(
 )
 eval_raw_dataset = concatenate_datasets([eval_raw_dataset] * 10)
 
-
 class PipeDataset(Dataset):
     def __init__(self, dataset: Dataset, key: str):
         self.dataset = dataset
@@ -55,15 +54,15 @@ model_names = [
     #'EleutherAI/gpt-neo-2.7B',
     # "EleutherAI/gpt-neo-1.3B",
     # "EleutherAI/gpt-neo-125M",
-    "google/t5-small-lm-adapt",
-    "google/t5-base-lm-adapt",
-    "google/t5-large-lm-adapt",
+    # "google/t5-small-lm-adapt",
+    # "google/t5-base-lm-adapt",
+    # "google/t5-large-lm-adapt",
     "google/t5-xl-lm-adapt",
 ]
 
 test_cases = [
-    "plain",
-    "half",
+    # "plain",
+    # "half",
     "deepspeed",
     # "deepspeed-moq",
 ]

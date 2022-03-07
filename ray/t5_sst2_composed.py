@@ -38,7 +38,7 @@ from ray.util.metrics import Counter, Gauge, Histogram, Metric
 from hfutils.arg_parser import RayArguments
 from hfutils.logger import Logger
 from hfutils.options import EnsembleOptions, ParallelOptions, ReplicationOptions
-from hfutils.model_pipe import T5Pipe, get_num_layers
+from hfutils.model_pipe import T5Pipe, T5PyTorchPipe, get_num_layers
 from hfutils.calibration import agg_logits, temperature_scale
 from hfutils.constants import (
     MODEL_TASK_TO_CLASS,
@@ -47,6 +47,12 @@ from hfutils.constants import (
     np_to_torch_dtype,
     MODEL_KEYS,
 )
+
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+# import pyprof
+# import torch.cuda.profiler as profiler
+
 
 class LatencyMonitor:
     def __init__(self, record_tag: str, config: Union[Dict, List[Dict]]):
@@ -104,31 +110,39 @@ args = RayArguments()
 task_name = args.data_args.task_name
 serve_args = args.serve_args
 
+
+home = "/jmain02/home/J2AD002/jxm12/lxx22-jxm12"
+tokenizer = AutoTokenizer.from_pretrained(os.path.join(home, "HuggingFace", "google", "t5-small-lm-adapt"))
+label_tokens = [
+    tokenizer(label, max_length=2).input_ids[0]
+    for label in TASK_TO_LABELS[task_name]
+    if label is not None
+]
+
 print(args)
 print(serve_args)
 
 ray.init(
-    namespace=f"t5-{task_name}", num_cpus=os.cpu_count(), num_gpus=torch.cuda.device_count()
+    namespace=f"t5-{task_name}", num_cpus=40, num_gpus=torch.cuda.device_count()
 )
 serve.start(detached=False)
+
+print("ray initialized")
 
 # print(torch.cuda.is_available())
 
 # m = torch.nn.Softmax(dim=-1)
 m = functools.partial(softmax, axis=-1)
 
-home_dir = "/sata_disk/jupyter-xue"
-base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs"))
-
 # task_name = "sst2"
 model_ensemble_name = serve_args.deployment # "_".join(["t5", task_name, "test"])
 
-tokenizer = AutoTokenizer.from_pretrained("google/t5-small-lm-adapt", use_fast=False)
-label_tokens = [
-    tokenizer(label, max_length=2).input_ids[0]
-    for label in TASK_TO_LABELS[task_name]
-    if label is not None
-]
+# tokenizer = AutoTokenizer.from_pretrained("google/t5-small-lm-adapt", use_fast=False)
+# label_tokens = [
+#     tokenizer(label, max_length=2).input_ids[0]
+#     for label in TASK_TO_LABELS[task_name]
+#     if label is not None
+# ]
 
 deploy_options = []
 
@@ -166,7 +180,7 @@ with open(serve_args.cfg, "r") as fp:
                 scheduler=ensemble_config["scheduler"],
                 parallel=parallel_stages > 1,
                 skip_connection=ensemble_config["skip_connection"],
-                ray_actor_options={"num_gpus": 0.01, "num_cpus": 4},
+                ray_actor_options={"num_gpus": 1, "num_cpus": 5},
                 parallel_options=[
                     ParallelOptions(
                         num_stages=parallel_stages,
@@ -199,9 +213,12 @@ visible_gpus = [str(i) for i in range(torch.cuda.device_count())]
 class T5Model:
     def __init__(self, options: EnsembleOptions, replica: int, stage: int) -> None:
 
+        # pyprof.init()
+
         self.key = options.parallel_options[stage].replication_options[replica].key
 
-        self.logger = Logger(self.key, "info", 5000000, 5)
+        # self.logger = Logger(self.key, "debug", 5000000, 5)
+        self.logger = Logger(__file__, "debug", 50000000, 5)
         self.logger.info("%s logger initialized", options.name)
 
         self.options = options
@@ -219,8 +236,12 @@ class T5Model:
         self.device = (
             options.parallel_options[stage].replication_options[replica].device
         )
-        self.cuda_stream = torch.cuda.Stream(device=self.device)
-        self.logger.debug("%s device %s", options.name, self.device)
+        self.logger.info("%s device %s", options.name, self.device)
+        self.cuda_stream = torch.cuda.Stream(
+            device=self.device, priority=-1
+        )
+        # self.cuda_stream = torch.cuda.Stream()
+        self.logger.info("%s stream %s", options.name, self.cuda_stream)
 
         self.model_name = model_name = options.name
         self.logger.debug("%s model_name %s", self.key, self.model_name)
@@ -238,24 +259,38 @@ class T5Model:
         self.logger.debug("%s num_stages %s", self.key, self.num_stages)
 
         # self.cuda_stream = torch.cuda.Stream()
-        from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
+        # from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
 
         model = T5ForConditionalGeneration.from_pretrained(options.ckpt_path)
         # if not "small" in model_name:
         #     model = load_state_dict_from_zero_checkpoint(model, options.ckpt_path)
         self.model_parallel = options.parallel
-        exec_map = (
-            options.parallel_options[stage].first_parallel_layer,
-            options.parallel_options[stage].last_parallel_layer,
-        )
+
+        # exec_map = (
+        #     options.parallel_options[stage].first_parallel_layer,
+        #     options.parallel_options[stage].last_parallel_layer,
+        # )
+
         # self.logger.info("%s garbage collected", model_name)
-        if self.model_parallel:
-            self.model = T5Pipe(model, exec_map).to(self.device)
-            self.logger.debug(
-                "%s T5Pipe num_layers %s ", model_name, len(self.model.pipe)
-            )
-        else:
-            self.model = model.to(self.device)
+        # if self.model_parallel:
+        #     self.model = T5PyTorchPipe(model, exec_map)
+        #     self.model = self.model.to(self.device)
+        #     # self.model.device = self.device
+        #     self.logger.debug(
+        #         "%s T5PyTorchPipe num_layers %s ", model_name, len(self.model.pipe)
+        #     )
+        # else:
+        #     self.model = model.to(self.device)
+        self.model = T5PyTorchPipe(model)
+        self.model.partition_by_parameter(
+            stage, options.parallel_options[stage].num_stages
+        )
+
+        self.logger.debug(
+            "%s T5PyTorchPipe num_layers %s ", model_name, len(self.model.layers)
+        )
+        # self.model = self.model.to(self.device)
+        self.model.convert(self.device)
         self.logger.info("%s model initialized %s", model_name, type(self.model))
         self.model.eval()
 
@@ -265,160 +300,169 @@ class T5Model:
 
         self.logger.debug("%s garbage collected", model_name)
 
+        # profiler.start()
+
         self.logger.info("%s full initialization complete", model_name)
 
-    def t5_parallel_inference(self, input_ids, attention_mask, *args):
-        batch_size = input_ids.shape[0]
-        outputs = self.model.forward(
-            (
-                input_ids,
-                attention_mask,
-                *args,
-            )
-        )
-        for i, t in enumerate(outputs):
-            self.logger.debug(
-                "%s t5_parallel_inference outputs size (%s) %s",
-                self.model_name,
-                i,
-                t.size() if t is not None else None,
-            )
+    def t5_parallel_inference(self, args):
+        # batch_size = input_ids.shape[0]
+
+        outputs = self.model.forward(args)
+        # for i, t in enumerate(outputs):
+        #     self.logger.trace(
+        #         "%s t5_parallel_inference outputs size (%s) %s",
+        #         self.model_name,
+        #         i,
+        #         t.size() if t is not None else None,
+        #     )
         if self.parallel_stage == self.num_stages - 1:
-            logits = outputs[1].view(batch_size, -1)[:, label_tokens]
-            logits = temperature_scale(logits, self.temperature)
-            return logits
-        else:
-            return outputs
+            logits = torch.squeeze(outputs, 1)[:, label_tokens]
+            # logits = outputs[1].view(batch_size, -1)
+            outputs = temperature_scale(logits, self.temperature)
 
-    def t5_inference(self, input_ids, attention_mask, *args):
-        outputs = self.model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            do_sample=False,  # disable sampling to test if batching affects output
-            return_dict_in_generate=True,
-            output_scores=True,
-        )
-        logits = outputs.scores[0][:, label_tokens]
-        logits = temperature_scale(logits, self.temperature)
-        return logits
+        return outputs
 
-    def default_inference(self, input_ids, attention_mask, *args):
+    # def t5_inference(self, input_ids, attention_mask, *args):
+    #     outputs = self.model.generate(
+    #         input_ids=input_ids,
+    #         attention_mask=attention_mask,
+    #         do_sample=False,  # disable sampling to test if batching affects output
+    #         return_dict_in_generate=True,
+    #         output_scores=True,
+    #     )
+    #     logits = outputs.scores[0][:, label_tokens]
+    #     # logits = outputs.scores[0]
+    #     logits = temperature_scale(logits, self.temperature)
+    #     return logits
+
+    def default_inference(self, args):
         logits = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
+            input_ids=args[0],
+            attention_mask=args[1],
             return_dict=True,
         ).logits
         logits = temperature_scale(logits, self.temperature)
         return logits
 
-    @torch.no_grad()
-    def model_inference(self, input_ids, attention_mask, parallel_args, **kwds):
+    # @torch.no_grad()
+    def model_inference(self, args, types, **kwds):
+        tag = kwds.get("tag", "")
         start_time = time.perf_counter()
 
-        input_ids = torch.Tensor(input_ids.copy()).to(self.device).to(torch.long)
-        attention_mask = (
-            torch.Tensor(attention_mask.copy()).to(self.device).to(torch.long)
+        # input_ids = torch.Tensor(input_ids.copy()).to(self.device).to(torch.long)
+        # attention_mask = (
+        #     torch.Tensor(attention_mask.copy()).to(self.device).to(torch.long)
+        # )
+
+        # input_ids = torch.as_tensor(input_ids, dtype=torch.int, device=self.device)
+        # attention_mask = torch.as_tensor(attention_mask, dtype=torch.int, device=self.device)
+
+        args = tuple(
+            # torch.Tensor(arg.copy()).to(self.device).to(torch.float)
+            [
+                torch.as_tensor(arg, dtype=types[i], device=self.device)
+                if arg is not None
+                else None
+                for i, arg in enumerate(args)
+            ]
         )
 
-        tensor_args = (
-            torch.Tensor(arg.copy()).to(self.device).to(torch.float)
-            if arg is not None
-            else None
-            for arg in parallel_args
+        # masked_inputs = (
+        #     input_ids,
+        #     attention_mask,
+        #     *tensor_args,
+        # )
+        end_time = time.perf_counter()
+        self.logger.debug(
+            "L(%s:%s[%s]:%s:%s)",
+            tag, self.key, os.getpid(),
+            "datacopy",
+            (end_time - start_time) * 1000,
         )
 
-        masked_inputs = (
-            input_ids,
-            attention_mask,
-            *tensor_args,
-        )
-
-        self.cuda_stream.synchronize()
+        # self.cuda_stream.synchronize()
+        start_time = time.perf_counter()
         with torch.cuda.stream(self.cuda_stream):
-            if "t5" in self.model_name and not self.model_parallel:
-                outputs = self.t5_inference(*masked_inputs)
-            elif "t5" in self.model_name and self.model_parallel:
-                outputs = self.t5_parallel_inference(*masked_inputs)
+            if "t5" in self.model_name:
+                outputs = self.t5_parallel_inference(args)
+            # if "t5" in self.model_name and not self.model_parallel:
+            #     outputs = self.t5_inference(*masked_inputs)
+            # elif "t5" in self.model_name and self.model_parallel:
+            #     outputs = self.t5_parallel_inference(*masked_inputs)
             else:
-                outputs = self.default_inference(*masked_inputs)
+                outputs = self.default_inference(args)
+        end_time = time.perf_counter()
+        self.logger.debug(
+            "L(%s:%s[%s]:%s:%s)",
+            tag, self.key, os.getpid(),
+            "submitstream",
+            (end_time - start_time) * 1000,
+        )
+        
+        start_time = time.perf_counter()
         self.cuda_stream.synchronize()  # MUST sync otherwise outputs are zeros
         end_time = time.perf_counter()
+        # self.logger.info(
+        #     "(%s) %s model_inference time elapsed %s (ms)",
+        #     self.key,
+        #     self.model_name,
+        #     (end_time - start_time) * 1000,
+        # )
         self.logger.info(
-            "(%s) %s model_inference time elapsed %s (ms)",
-            self.key,
-            self.model_name,
+            "L(%s:%s[%s]:%s:%s)",
+            tag, self.key, os.getpid(),
+            "cudasync",
             (end_time - start_time) * 1000,
         )
         # print(outputs.shape, isinstance(outputs, tuple))
+
+        start_time = time.perf_counter()
         if isinstance(outputs, tuple):
-            return tuple(
+            outputs = tuple(
                 [
                     output.detach().cpu().numpy() if output is not None else None
                     for output in outputs
                 ]
             )
         else:
-            return outputs.detach().cpu().numpy()
+            outputs = outputs.detach().cpu().numpy()
 
-    # async def __call__(self, *args: Any, **kwds: Any) -> Any:
-    #     return await self.model_inference(*args, **kwds)
-
-    async def __call__(self, request):
-        data = await request.json()
-
-        batch_size = len(data["input_ids"])
-        input_ids = np.array(data["input_ids"])
-        attention_mask = np.array(data["attention_mask"])
-
-        step = data["step"]
-        pid = data["pid"]
-
-
-        outputs = self.model_inference(
-            input_ids, attention_mask, (None, None, None, None)
+        end_time = time.perf_counter()
+        self.logger.info(
+            "L(%s:%s[%s]:%s:%s)",
+            tag, self.key, os.getpid(),
+            "outputscopy",
+            (end_time - start_time) * 1000,
         )
-        # print("a", type(outputs))
+        
+        return outputs
 
-        return {
-            "step": step,
-            "pid": pid,
-            "logits": outputs.tolist(),
-            "labels": np.argmax(outputs, axis=-1).flatten().tolist(),
-        }
+    async def __call__(self, *args: Any, **kwds: Any) -> Any:
+        return self.model_inference(*args, **kwds)
 
-    # def read_cfg(self, path):
-    #     torch.cuda.empty_cache()
-    #     gc.collect()
-    #     # print(torch.cuda.is_available())
-    #     try:
-    #         with open(path, "r") as fp:
-    #             config = json.load(fp)
-    #         self.parallel_stages = config[self.model_name]["parallel_stages"]
-    #         self.threshold = config[self.model_name]["threshold"]
-    #         temperature = config[self.model_name]["temperature"]
-    #         self.temperature = torch.nn.Parameter(
-    #             torch.ones(1, device=self.device) * temperature
-    #         )
-    #         self.ensemble_pos = config[self.model_name]["ensemble_pos"]
-    #         self.ensemble_weight = config[model_ensemble_name]["weights"][
-    #             self.ensemble_pos
-    #         ]
-    #         self.num_ensembles = len(config[model_ensemble_name]["weights"])
-    #         self.logger.info(
-    #             "%s load meta from %s \n threshold %s, temperature %s, ensemble_pos %s, ensemble_weight %s, num_ensembles %s",
-    #             self.model_name,
-    #             path,
-    #             self.threshold,
-    #             self.temperature,
-    #             self.ensemble_pos,
-    #             self.ensemble_weight,
-    #             self.num_ensembles,
-    #         )
-    #     except Exception as e:
-    #         self.logger.warn("read_cfg exception %s", traceback.print_stack())
+    # async def __call__(self, request):
+    #     data = await request.json()
 
-    #     self.cfg_timer = threading.Timer(10, self.read_cfg, (path,))
-    #     self.cfg_timer.start()
+    #     batch_size = len(data["input_ids"])
+    #     input_ids = np.array(data["input_ids"])
+    #     attention_mask = np.array(data["attention_mask"])
+
+    #     step = data["step"]
+    #     pid = data["pid"]
+
+
+
+    #     outputs = self.model_inference(
+    #         input_ids, attention_mask, (None, None, None, None)
+    #     )
+    #     # print("a", type(outputs))
+
+    #     return {
+    #         "step": step,
+    #         "pid": pid,
+    #         "logits": outputs.tolist(),
+    #         # "labels": np.argmax(outputs, axis=-1).flatten().tolist(),
+    #     }
 
 
 # remote_handles = []
@@ -449,14 +493,14 @@ for d, ensemble_option in enumerate(deploy_options):
 
 # print("=============================================================================================")
 
-@serve.deployment(max_concurrent_queries=1000, route_prefix="/composed")
+@serve.deployment(max_concurrent_queries=100, route_prefix="/composed")
 class T5Ensemble:
     def __init__(self, deploy_options):
 
         # self.deploy_options = deploy_options
         # self.latency_monitor = LatencyMonitor(serve_args.tag, config)
 
-        self.logger = Logger(__file__, "info", 5000000, 5)
+        self.logger = Logger(__file__, "info", 50000000, 5)
 
         self.logger.info("T5Ensemble logger initialized")
 
@@ -536,49 +580,49 @@ class T5Ensemble:
         batch_mask[0, :] = 1  # WHERE TO ENTER
         batch_mask = batch_mask.astype(bool)
 
-        step = data["step"]
+        tag = data["tag"]
         pid = data["pid"]
 
         for idx, options in enumerate(self.ensembles):
             local_mask = batch_mask[idx]
-            self.logger.debug("%s local_mask %s", options.name, local_mask)
+            self.logger.trace("%s local_mask %s", options.name, local_mask)
 
             # print(len(options.parallel_options))
 
             if np.any(local_mask):
 
-                outputs = (None, None, None, None)
+                outputs = (input_ids[local_mask], attention_mask[local_mask]) + tuple([None] * 6)
+                types = (torch.int, torch.int) + tuple([torch.float] * 6)
                 for parallel_options in options.parallel_options:
                     handle, key = self.schedule_handle(options.scheduler, parallel_options)
-                    start_time = time.perf_counter()
-                    outputs = await handle.model_inference.remote(
-                        input_ids[local_mask], attention_mask[local_mask], outputs
-                    )
-                    end_time = time.perf_counter()
-                    self.logger.info(
-                        "%s:%s:%s;",
-                        serve_args.tag, key, (end_time - start_time) * 1000,
-                    )
+                    # start_time = time.monotonic()
+                    outputs = await handle.model_inference.remote(outputs, types, tag=tag)
+                    # end_time = time.monotonic()
+                    # self.logger.info(
+                    #     "L(%s:%s:%s)",
+                    #     tag, key, (end_time - start_time) * 1000,
+                    # )
                     # await self.latency_monitor.observe((end_time-start_time)*1000, key)
-                outputs = ray.get(outputs)
                 # print(outputs.shape, outputs)
+                outputs = ray.get(outputs)
 
+                start_time = time.perf_counter()
                 ensemble_outputs = self.model_ensemble(
                     ensemble_outputs, outputs, local_mask, idx
+                )
+                end_time = time.perf_counter()
+                self.logger.info(
+                    "E(%s:%s:%s)",
+                    tag,
+                    self.ensembles[idx].name,
+                    (end_time - start_time) * 1000,
                 )
 
                 extended_mask, max_prob = self.offload_mask(
                     ensemble_outputs, local_mask, idx
                 )
-                # print(
-                #     options.name,
-                #     extended_mask.size,
-                #     max_prob.size,
-                #     batch_size,
-                #     np.sum(extended_mask),
-                #     np.sum(local_mask),
-                # )
-                self.logger.debug(
+
+                self.logger.trace(
                     "%s local_mask updated %s", options.name, extended_mask
                 )
                 num_next_models = self.num_ensembles - idx - 1
@@ -588,25 +632,25 @@ class T5Ensemble:
                     # batch_mask = self.update_batch_mask(
                     #     max_prob, batch_mask.copy(), extended_mask, idx
                     # )
-                    # self.logger.debug(
+                    # self.logger.trace(
                     #     "%s batch_mask updated %s", options.name, batch_mask
                     # )
             # print(options.name, num_next_models, batch_mask)
             assert np.sum(batch_mask) == batch_size
-        assert ensemble_outputs.shape == (batch_size, 2)
+        # assert ensemble_outputs.shape == (batch_size, 2)
         # return {"labels": np.argmax(ensemble_outputs, axis=-1).flatten().tolist()}
         return {
-            "step": step,
+            "tag": tag,
             "pid": pid,
             "logits": ensemble_outputs.tolist(),
-            "labels": np.argmax(ensemble_outputs, axis=-1).flatten().tolist(),
+            # "labels": np.argmax(ensemble_outputs, axis=-1).flatten().tolist(),
         }
 
     def offload_mask(self, logits, mask, idx):
         probabilities = np.power(m(logits), 2)
         max_prob = np.max(probabilities, axis=-1)
         prob_mask = max_prob < self.ensembles[idx].threshold
-        self.logger.debug(
+        self.logger.trace(
             "%s (offload_mask) prob_mask %s %s",
             self.ensembles[idx].name,
             prob_mask,
@@ -614,7 +658,7 @@ class T5Ensemble:
         )
         extended_mask = mask & prob_mask
         # combined_mask[mask] &= prob_mask[mask]
-        self.logger.debug("max_prob %s, extended_mask %s", max_prob, extended_mask)
+        self.logger.trace("max_prob %s, extended_mask %s", max_prob, extended_mask)
         return extended_mask, max_prob
 
     # async def model_ensemble(
@@ -630,7 +674,7 @@ class T5Ensemble:
     #         model_subtypes[idx],
     #         (end_time - start_time) * 1000,
     #     )
-    #     self.logger.debug(
+    #     self.logger.trace(
     #         "%s ensemble_outputs %s",
     #         model_subtypes[idx],
     #         ensemble_outputs,
@@ -638,20 +682,14 @@ class T5Ensemble:
     #     return ensemble_outputs if ensemble_outputs is not None else local_outputs
 
     def model_ensemble(self, ensemble_outputs, local_outputs, mask, idx):
-        start_time = time.perf_counter()
+        # start_time = time.perf_counter()
         if ensemble_outputs is not None:
             ensemble_weight = self.ensembles[idx].ensemble_weight
             ensemble_outputs[mask] = (
                 ensemble_outputs[mask] * (1 - ensemble_weight)
                 + local_outputs * ensemble_weight
             )
-        end_time = time.perf_counter()
-        self.logger.debug(
-            "%s model_ensemble time elapsed %s (ms)",
-            self.ensembles[idx].name,
-            (end_time - start_time) * 1000,
-        )
-        self.logger.debug(
+        self.logger.trace(
             "%s ensemble_outputs %s",
             self.ensembles[idx].name,
             ensemble_outputs,
@@ -676,7 +714,7 @@ class T5Ensemble:
                     & (max_prob < skip_th_upper)
                     & local_mask
                 )
-                self.logger.debug(
+                self.logger.trace(
                     "%s skip_th_lower %s, skip_th_upper %s, skip_mask %s",
                     self.ensembles[idx].name,
                     skip_th_lower,
@@ -692,7 +730,7 @@ class T5Ensemble:
 
 
 T5Ensemble.options(
-    num_replicas=4, ray_actor_options={"num_gpus": 0, "num_cpus": 5}
+    num_replicas=4, ray_actor_options={"num_cpus": 5}
 ).deploy(deploy_options)
 
 # input_ids = [[200, 200, 200, 200, 0, 0, 0, 0]]

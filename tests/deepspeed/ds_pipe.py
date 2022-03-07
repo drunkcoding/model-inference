@@ -26,9 +26,10 @@ eval_dataset = dataset_loader.load(
 
 batch_size = data_args.eval_bsz
 user_path = os.path.expanduser("~")
-model_path = os.path.join(user_path, "HuggingFace", "google", "t5-xl-lm-adapt")
+# model_path = os.path.join(user_path, "HuggingFace", "google", "t5-xl-lm-adapt")
 # model_path = "/mnt/yavin/checkpoints/t5-xl-lm-adapt/sst2/checkpoint-1380/"
 # model_path = "google/t5-small-lm-adapt"
+model_path = args.model_args.model_name_or_path
 
 if data_args.pad_to_max_length:
     data_collator = default_data_collator
@@ -49,12 +50,10 @@ class PipeDataset(Dataset):
             "encoder_attention_mask": self.dataset[i]['attention_mask'],
         }
 
-eval_dataset = concatenate_datasets([eval_dataset]*50)
+eval_dataset = concatenate_datasets([eval_dataset]*70)
 eval_dataset = PipeDataset(eval_dataset)
 
-
 # print(eval_dataset[0])
-
 
 def eval_generator():
     eval_dataloader = DataLoader(
