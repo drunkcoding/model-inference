@@ -46,13 +46,13 @@ RUN_SEC = 60
 # model_name = "gpt_neo_2.7B_standalone"
 # model_name = "gpt_neo_2stage"
 # model_name = "distilgpt2_cola"
-model_name = "t5-xl-lm-adapt_sst2"
+# model_name = "t5-xl-lm-adapt_sst2"
 model_tag = "ray-g1r1p0-async"
-# model_name = "t5_cola_ensemble"
+model_name = "t5_sst2_ensemble"
 
 remote = "localhost"
-tensorboard_base = "/home/oai/share/model-inference/tritonserver/"
-tensorboard_logdir = os.path.join(tensorboard_base, model_tag)
+# tensorboard_base = "/home/oai/share/model-inference/tritonserver/"
+# tensorboard_logdir = os.path.join(tensorboard_base, model_tag)
 
 if data_args.pad_to_max_length:
     data_collator = default_data_collator
@@ -67,9 +67,11 @@ def dummy(result, error):
 def prepare_query(batch):
     input_ids = batch["input_ids"].numpy().tolist()
     attention_mask = batch["attention_mask"].numpy().tolist()
+    bsz = len(input_ids)
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
+        "tag": f"ray-{bsz}"
     }
 
 
@@ -106,8 +108,9 @@ def test_body(pid, inputs_list, label_list):
             except:
                 print(resp.content)
                 exit()
-            assert predictions["step"] == step
+            # assert predictions["step"] == step
             assert predictions["pid"] == pid
+            
             # query_times[cnt] = (time.perf_counter() - query_times[cnt]) * 1000
             # cnt += 1
             # response = async_request.get_result()
@@ -117,7 +120,7 @@ def test_body(pid, inputs_list, label_list):
             # print(predictions, label_list[idx])
 
             metric.add_batch(
-                predictions=predictions["labels"],
+                predictions=np.argmax(predictions["logits"], axis=-1),
                 references=label_list[step],
             )
 
@@ -140,10 +143,10 @@ def test_body(pid, inputs_list, label_list):
     return pid
 
 
-writer_backend = ModelMetricsWriterBackend(tensorboard_logdir, f"{model_name}")
-writer_backend.remote = remote
+# writer_backend = ModelMetricsWriterBackend(tensorboard_logdir, f"{model_name}")
+# writer_backend.remote = remote
 # writer_backend.step = batch_size
-writer_backend.start()
+# writer_backend.start()
 
 for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
 # for batch_size in [4, 8, 16, 32, 64, 128, 256]:
@@ -152,7 +155,7 @@ for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
     # metric = load_metric("glue", args.task_name)
 
     # c_dataset = concatenate_datasets([eval_dataset] * int(np.log2(batch_size) + 1))
-    c_dataset = concatenate_datasets([eval_dataset] * 1)
+    c_dataset = concatenate_datasets([eval_dataset] * 10)
 
     eval_dataloader = DataLoader(
         c_dataset,
@@ -180,6 +183,6 @@ for batch_size in [1, 2, 4, 8, 16, 32, 64, 128, 256]:
     pool.close()
     pool.join()
 
-writer_backend.stop()
+# writer_backend.stop()
 
 # with grpcclient.InferenceServerClient(f"{remote}:8001") as client:

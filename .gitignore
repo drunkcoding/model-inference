@@ -5,7 +5,13 @@ __pycache__/
 
 tritonserver/
 figures/
+data/
 *.log*
+*.nvprof
+*.trace
+*.out
+*.png
+impact_tracker/
 
 # C extensions
 *.so

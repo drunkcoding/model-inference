@@ -3,19 +3,14 @@ backend: "python"
 
 input [
   {
-    name: "input_ids"
+    name: "encoder_input_ids"
     data_type: TYPE_INT64
     dims: [ TOKEN_INPUT_DIM ]
   },
   {
-    name: "attention_mask"
+    name: "encoder_attention_mask"
     data_type: TYPE_INT64
     dims: [ TOKEN_INPUT_DIM ]
-  },
-  {
-    name: "ensemble_outputs"
-    data_type: TYPE_FP32
-    dims: [ SCORE_OUTPUT_DIM ]
   },
   {
     name: "batch_mask"
@@ -24,9 +19,11 @@ input [
   }
 ]
 
+parameters: { key: "FORCE_CPU_ONLY_INPUT_TENSORS" value: {string_value:"no"}}
+
 output [
   {
-    name: "outputs"
+    name: "logits"
     data_type: TYPE_FP32
     dims: [ SCORE_OUTPUT_DIM ]
   },

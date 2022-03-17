@@ -43,7 +43,7 @@ from hfutils.logger import Logger
 from hfutils.arg_parser import HfArguments
 from hfutils.loader import ModelLoader, DatasetLoader
 from hfutils.monte_carlo import monte_carlo_bounds
-from hfutils.calibration import temperature_scale, temperature_scaling_helper, agg_logits
+from hfutils.calibration import g_scaling, g_scaling_helper, agg_logits
 
 from utils_qa import postprocess_qa_predictions
 
@@ -471,14 +471,24 @@ def model_inference(model, batch, temperature=None, device="cuda:0"):
         outputs = model(input_ids=input_ids,token_type_ids=token_type_ids,attention_mask=attention_mask, return_dict=True)
     start_logits = outputs.start_logits
     end_logits = outputs.end_logits
-    logits = torch.cat([start_logits, end_logits])
+    
     # print(start_logits.shape, end_logits.shape)
-    # print(batch)
+    logits = torch.cat([start_logits, end_logits])
     if temperature is not None:
-        logits = temperature_scale(logits, temperature)
+        start_logits = temperature(start_logits)
+        end_logits = temperature(end_logits)
+        logits = torch.cat([start_logits, end_logits])
     return logits
 
 # ============= COLLECT TRAIN LOGITS =================
+
+epoches = [
+    2500,
+    2500,
+    2500,
+    2500
+]
+model_epoches = dict(zip(model_keys, epoches))
 
 model_outputs = {}
 for key in model_keys:
@@ -498,10 +508,13 @@ for key in model_keys:
 
     all_logits = torch.cat(all_logits)
     model_outputs[key] = all_logits
+
+    labels = torch.cat(labels_list).flatten()
+    g_scaling(all_logits, labels, 5000, 384)
     # print(all_start_logits[0].shape, predictions[0].shape)
     # eval_pred = post_processing_function(val_dataset, test, predictions)
     # logger.info("indv %s %s", key, compute_metrics(eval_pred))
-labels = torch.cat(labels_list).flatten()
+
 
 print(len(train))
 print(labels.shape)
@@ -509,84 +522,24 @@ print(model_outputs[model_keys[0]].shape)
 
 # =============  TRAIN TEMPERATURE =============
 
-model_temperature = temperature_scaling_helper(model_outputs, labels, model_device)
+model_temperature = g_scaling_helper(model_outputs, labels, model_epoches, 384)
 print("temperature", model_temperature)
 
 for key in model_keys:
-    model_outputs[key] = temperature_scale(model_outputs[key], model_temperature[key])
+    model_outputs[key] = model_temperature[key](model_outputs[key])
+    torch.save(model_temperature[key].state_dict(), os.path.join("tests", "confidence", f"bert_squad_glayer-{key}"))
 # =============  TRAIN HYPERPARAMETER =============
 
 num_train_labels = len(train)
 num_models = len(model_keys)
-
-# def total_reward(threshold):
-#     reward = 0
-#     energy = 0
-#     process_cnt = 0
-#     mask = np.array([False] * num_train_labels)
-
-#     alpha = threshold[-1]
-#     threshold = threshold[:-1]
-     
-#     hist_start_logits = None
-#     hist_end_logits = None
-#     for i, key in enumerate(model_keys):
-#         hist_start_logits = agg_logits(
-#             hist_start_logits if key != model_keys[-1] else None,
-#             model_outputs[key][::2],
-#             alpha
-#         )
-#         hist_end_logits = agg_logits(
-#             hist_start_logits if key != model_keys[-1] else None,
-#             model_outputs[key][1::2],
-#             alpha
-#         )
-#         start_probs, _ = torch.max(m(hist_start_logits), dim=1)
-#         end_probs, _ = torch.max(m(hist_end_logits), dim=1)
-        
-#         min_probs = torch.where(start_probs > end_probs, end_probs, start_probs).detach().cpu().numpy()
-#         processed = (
-#             (min_probs >= threshold[i])
-#             if key in model_keys[:-1]
-#             else np.array([True] * num_train_labels)
-#         )
-#         processed_probs = min_probs[(~mask) & processed]
-#         reward += np.around(np.sum(processed_probs) / 8.0) * 8
-#         energy += model_energy[key] * np.count_nonzero(~mask) 
-#         process_cnt += np.count_nonzero(~mask) 
-#         mask |= processed
-#     # return -(reward - energy / sum(energy_discount_factor)) / num_train_labels
-#     # return (energy / process_cnt) / (reward / train_len)
-#     # return -(reward / train_len - energy / process_cnt)
-#     return - (reward - 0.3*energy)
-
-# from scipy.optimize import minimize
-
-# constraints = [{"type": "ineq", "fun": lambda x: 1-x},
-#         {"type": "ineq", "fun": lambda x: x}]
-# result = minimize(total_reward, np.random.random(num_models), options={"maxiter": 500, "eps": 0.01, "ftol": 0.0001}, method="SLSQP", constraints=constraints)
-# logger.info("%s", result)
-
-# mc_threshold = result['x']
 
 def total_reward(threshold):
     reward = 0
     energy = 0
     mask = np.array([False] * num_train_labels)
 
-    # weights = np.array(threshold[:(num_models*num_models)]).reshape((num_models,num_models))
-    # threshold = threshold[(num_models*num_models):]
-    
     alpha = threshold[-1]
     threshold = threshold[:-1]
-    # aggregated = {}
-    # for i, key in enumerate(model_keys):
-    #     if i == 0:
-    #         aggregated[key] = model_outputs[key]
-    #     else:
-    #         weighted_sum = 0
-    #         for j in range(i+1):
-    #             aggregated[key] = model_outputs[key]
      
     hist_start_logits = None
     hist_end_logits = None
@@ -601,8 +554,6 @@ def total_reward(threshold):
             model_outputs[key][1::2],
             alpha
         )
-
-        # print(hist_start_logits.shape, hist_end_logits.shape)
 
         start_probs, _ = torch.max(m(hist_start_logits), dim=1)
         end_probs, _ = torch.max(m(hist_end_logits), dim=1)
@@ -623,9 +574,9 @@ def total_reward(threshold):
 threshold_bounds = monte_carlo_bounds(
     # functools.partial(total_reward, model_keys=model_keys),
     total_reward,
-    [(0.5, 1.0)] * (num_models),
+    [(0.25, 1.0)] * (num_models),
     [("reward", float), ("energy", float)],
-    n=10000,
+    n=1000,
     tops=40,
     maxiter=30,
 )
@@ -715,23 +666,6 @@ for i, key in enumerate(model_keys):
     delegated_end_logit = hist_end_logits[(~mask) & processed]
 
     true_indices = np.argwhere((~mask) & processed).flatten()
-    # print(true_indices, num_test_labels)
-
-    # print(val_dataset['id'])
-    # print(test['example_id'])
-
-    # eval_pred = post_processing_function(
-    #     val_dataset.select(true_indices), 
-    #     test.select(true_indices), 
-    #     (delegated_start_logit, delegated_end_logit)
-    # )
-    # logger.info(
-    #     "%s process count (%s) %s, metric %s",
-    #     key, num_test_labels,
-    #     np.count_nonzero((~mask) & processed),
-    #     compute_metrics(eval_pred),
-    # )
-
     logger.info(
         "%s process count (%s) %s",
         key, num_test_labels,
