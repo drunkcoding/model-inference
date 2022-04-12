@@ -3,7 +3,6 @@ import time
 from datasets import concatenate_datasets
 import deepspeed
 import numpy as np
-from ray import data
 from scipy import stats
 import torch
 import pandas as pd
@@ -63,8 +62,8 @@ model_names = [
 test_cases = [
     # "plain",
     # "half",
-    "deepspeed",
-    # "deepspeed-moq",
+    # "deepspeed",
+    "deepspeed-moq",
 ]
 
 # model_name = args.model_args.model_name_or_path

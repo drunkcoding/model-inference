@@ -1,20 +1,24 @@
 #!/bin/bash
 
-BASE="/sata_disk/jupyter-xue"
+type="t5"
 
-tritonserver --model-repository ${BASE}/model-inference/repository/ \
+tritonserver --model-repository ${HOME}/model-inference/repository/repo_${type}/ \
 --backend-directory ${HOME}/.local/opt/tritonserver/backends/ \
 --exit-timeout-secs 60 \
 --log-info True \
 --log-warning True \
 --log-error True \
---metrics-interval-ms 100 \
+--metrics-interval-ms 10 \
 --http-thread-count 10 \
 --buffer-manager-thread-count 8 \
 --allow-http True \
---model-control-mode explicit \
---load-model t5_cola_ensemble_pp \
 --grpc-infer-allocation-pool-size 20 &> trace.log &
+
+# --model-control-mode explicit \
+# --load-model ${type}_e0p0 \
+
+# --load-model ${type}_e1p0 \
+# --load-model ${type}_e0p0 \
 
 # --model-control-mode poll \
 # --repository-poll-secs 60

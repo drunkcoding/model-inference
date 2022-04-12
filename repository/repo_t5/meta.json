@@ -1,0 +1,52 @@
+{
+    "t5-small-lm-adapt": {
+        "threshold": 0.65650492,
+        "temperature": 1.7848,
+        "parallel_stages": 1,
+        "path": "t5-small-lm-adapt/all/checkpoint-4500",
+        "util_params": [
+            21.564945500310746,
+            -15.138317641909849
+        ]
+    },
+    "t5-base-lm-adapt": {
+        "threshold": 0.85469571,
+        "temperature": 2.1796,
+        "parallel_stages": 1,
+        "path": "t5-base-lm-adapt/all/checkpoint-2000",
+        "util_params": [
+            4.205570303169466,
+            55.4712557556144
+        ]
+    },
+    "t5-large-lm-adapt": {
+        "threshold": 0.85508568,
+        "temperature": 2.1116,
+        "parallel_stages": 1,
+        "path": "t5-large-lm-adapt/all/checkpoint-1500",
+        "util_params": [
+            0.9813083031654353,
+            39.150095829514946
+        ]
+    },
+    "t5-xl-lm-adapt": {
+        "threshold": 0.0,
+        "temperature": 2.3932,
+        "parallel_stages": 1,
+        "path": "t5-xl-lm-adapt/all/checkpoint-1500",
+        "util_params": [
+            0.04642164991546499,
+            2.402200418179127
+        ]
+    },
+    "t5_ensemble": {
+        "ensembles": [
+            "t5-small-lm-adapt",
+            "t5-base-lm-adapt",
+            "t5-large-lm-adapt",
+            "t5-xl-lm-adapt"
+        ],
+        "alpha": 0.6
+    },
+    "base_dir": "/home/xly/model-finetune/outputs/google"
+}

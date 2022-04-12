@@ -1,0 +1,52 @@
+{
+    "vit-tiny-patch16-224": {
+        "threshold": 0.39,
+        "temperature": 1.0134,
+        "parallel_stages": 1,
+        "path": "WinKawaks/vit-tiny-patch16-224",
+        "util_params": [
+            28.77052136941151,
+            -22.05592437878701
+        ]
+    },
+    "vit-small-patch16-224": {
+        "threshold": 0.24,
+        "temperature": 1.0016,
+        "parallel_stages": 1,
+        "path": "WinKawaks/vit-small-patch16-224",
+        "util_params": [
+            10.112434734935427,
+            -4.420536354426504
+        ]
+    },
+    "vit-base-patch16-224": {
+        "threshold": 0.35,
+        "temperature": 1.0544,
+        "parallel_stages": 1,
+        "path": "google/vit-base-patch16-224",
+        "util_params": [
+            1.7293167268661003,
+            2.1360236593259434
+        ]
+    },
+    "vit-large-patch16-224": {
+        "threshold": 0.0,
+        "temperature": 1.0845,
+        "parallel_stages": 1,
+        "path": "google/vit-large-patch16-224",
+        "util_params": [
+            -0.11003595134530754,
+            3.7493682150167214
+        ]
+    },
+    "vit_ensemble": {
+        "ensembles": [
+            "vit-tiny-patch16-224",
+            "vit-small-patch16-224",
+            "vit-base-patch16-224",
+            "vit-large-patch16-224"
+        ],
+        "alpha": 0.6
+    },
+    "base_dir": "/mnt/raid0nvme1/HuggingFace"
+}

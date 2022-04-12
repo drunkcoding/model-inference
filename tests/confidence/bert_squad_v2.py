@@ -58,7 +58,7 @@ class DataTrainingArguments:
     )
 
     dataset_name: Optional[str] = field(
-        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
+        default="squad_v2", metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
@@ -138,37 +138,47 @@ task_name = data_args.dataset_name
 # assert task_name == "squad_v2"
 # assert data_args.version_2_with_negative == True
 
-home_dir = os.path.expanduser(("~"))
+# home_dir = os.path.expanduser(("~"))
+home_dir = "/mnt/raid0nvme1"
 base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs"))
 
 model_keys = [
+    # "XXS",
+    # "XS",
     "S",
     "M",
-    "L",
+    # "L",
     "XL",
 ]
 
 device_map = [
-    "cuda:0",
-    "cuda:0",
-    "cuda:0",
-    "cuda:0",
+    # "cuda:1",
+    # "cuda:1",
+    "cuda:1",
+    "cuda:1",
+    # "cuda:1",
+    "cuda:1",
 ]
 
 energy_discount_factor = [
+    0.25 / 40,
+    0.5 / 40,
     1 / 40,
     3 / 40,
-    10 / 40,
+    # 10 / 40,
     40 / 40,
 ]
 
 model_paths = [
     # f"{base_dir}/distilbert-base-uncased/{task_name}/checkpoint-512",
+    # f"{home_dir}/HuggingFace/mrm8488/bert-tiny-5-finetuned-squadv2",
+    # f"{home_dir}/HuggingFace/mrm8488/bert-mini-5-finetuned-squadv2",
     f"{home_dir}/HuggingFace/twmkn9/distilbert-base-uncased-squad2",
     f"{home_dir}/HuggingFace/twmkn9/bert-base-uncased-squad2",
-    f"{home_dir}/HuggingFace/madlag/bert-large-uncased-wwm-squadv2-x2.63-f82.6-d16-hybrid-v1",
+    # f"{home_dir}/HuggingFace/madlag/bert-large-uncased-wwm-squadv2-x2.63-f82.6-d16-hybrid-v1",
     # f"{base_dir}/bert-large-uncased/squad_v2_moq/checkpoint-8236",
     f"{home_dir}/HuggingFace/madlag/bert-large-uncased-squadv2",
+    # "/home/xly/model-finetune/outputs/bert-large-uncased/squad_v2_moq/checkpoint-8236"
     # f"{base_dir}/bert-large-uncased/{task_name}/checkpoint-8236",
 ]
 
@@ -195,7 +205,7 @@ model_energy = dict(zip(model_keys, energy_discount_factor))
 model_paths = dict(zip(model_keys, model_paths))
 model_device = dict(zip(model_keys, device_map))
 
-logger = Logger(__file__, "info", 5000000, 5)
+logger = Logger(__file__, logging.INFO, 5000000, 5)
 
 models = dict()
 for key in model_paths:
@@ -203,7 +213,7 @@ for key in model_paths:
     models[key] = AutoModelForQuestionAnswering.from_pretrained(
         model_paths[key]
     )
-    if key == "L":
+    if "hybrid" in model_paths[key]:
         models[key] = optimize_model(models[key], "dense")
     models[key] = models[key].to(model_device[key])
     models[key].eval()
@@ -460,7 +470,7 @@ logger.info("data loaded")
 
 # ============= MODEL INFERENCE FRUNCTION =================
 @torch.no_grad()
-def model_inference(model, batch, temperature=None, device="cuda:0"):
+def model_inference(model, batch, temperature=None, device="cuda:1"):
     input_ids = batch["input_ids"].to(device)
     attention_mask = batch["attention_mask"].to(device)
     token_type_ids = batch["token_type_ids"].to(device)
@@ -507,10 +517,12 @@ print(len(train))
 print(labels.shape)
 print(model_outputs[model_keys[0]].shape)
 
+logger.info("train data collected")
+
 # =============  TRAIN TEMPERATURE =============
 
 model_temperature = temperature_scaling_helper(model_outputs, labels, model_device)
-print("temperature", model_temperature)
+logger.info("temperature %s", model_temperature)
 
 for key in model_keys:
     model_outputs[key] = temperature_scale(model_outputs[key], model_temperature[key])
@@ -614,7 +626,8 @@ def total_reward(threshold):
             else np.array([True] * num_train_labels)
         )
         processed_probs = min_probs[(~mask) & processed]
-        reward += np.around(np.sum(processed_probs) / 8.0) * 8
+        # reward += np.around(np.sum(processed_probs) / 8.0) * 8
+        reward += np.sum(np.round(processed_probs, 2))
     
         energy += model_energy[key] * np.count_nonzero(~mask) 
         mask |= processed
@@ -625,7 +638,7 @@ threshold_bounds = monte_carlo_bounds(
     total_reward,
     [(0.5, 1.0)] * (num_models),
     [("reward", float), ("energy", float)],
-    n=10000,
+    n=1000,
     tops=40,
     maxiter=30,
 )
@@ -738,8 +751,8 @@ for i, key in enumerate(model_keys):
         np.count_nonzero((~mask) & processed),
     )
 
-    final_start_logits[(~mask) & processed] = delegated_start_logit
-    final_end_logits[(~mask) & processed] = delegated_end_logit
+    final_start_logits[(~mask) & processed] = delegated_start_logit.to("cuda")
+    final_end_logits[(~mask) & processed] = delegated_end_logit.to("cuda")
 
     mask |= processed
 

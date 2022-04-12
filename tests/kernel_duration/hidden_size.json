@@ -1,0 +1,30 @@
+{
+    "t5": {
+        "t5-xl-lm-adapt": 2048,
+        "t5-small-lm-adapt": 512,
+        "t5-base-lm-adapt": 768,
+        "t5-large-lm-adapt": 1024
+    },
+    "vit": {
+        "vit-tiny-patch16-224": 192,
+        "vit-small-patch16-224": 384,
+        "vit-base-patch16-224": 768,
+        "vit-large-patch16-224": 1024
+    },
+    "gpt": {
+        "distilgpt2": 768,
+        "gpt2": 768,
+        "gpt2-medium": 1024,
+        "gpt2-large": 1280,
+        "gpt2-xl": 1600,
+        "gpt-j-6B": 4096
+    },
+    "bert": {
+        "bert-tiny-5-finetuned-squadv2": 128,
+        "bert-mini-5-finetuned-squadv2": 256,
+        "bert-small-2-finetuned-squadv2": 512,
+        "distilbert-base-uncased": 768,
+        "bert-base-uncased": 768,
+        "bert-large-uncased": 1024
+    }
+}

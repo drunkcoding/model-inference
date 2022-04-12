@@ -35,7 +35,7 @@ def return_submodels(graph: gs.Graph):
 
 
 
-base_dir = '/mnt/yavin/HuggingFace/'
+base_dir = '/mnt/raid0nvme1/HuggingFace/'
 
 tokenizer = AutoTokenizer.from_pretrained(os.path.join(base_dir, 'gpt2'))
 model  = AutoModel.from_pretrained(os.path.join(base_dir, 'gpt2'))

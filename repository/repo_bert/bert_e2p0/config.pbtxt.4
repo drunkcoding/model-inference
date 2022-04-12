@@ -1,0 +1,61 @@
+name: "bert_e2p0"
+backend: "python"
+
+input [
+  {
+    name: "input_ids"
+    data_type: TYPE_INT64
+    dims: [ -1, 384 ]
+  },
+  {
+    name: "token_type_ids"
+    data_type: TYPE_INT64
+    dims: [ -1, 384 ]
+  },
+  {
+    name: "attention_mask"
+    data_type: TYPE_INT64
+    dims: [ -1, 384 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 3, -1 ]
+  },
+  {
+    name: "logits"
+    data_type: TYPE_FP32
+    dims: [ -1, 384, 2 ]
+  }
+]
+
+parameters: { key: "FORCE_CPU_ONLY_INPUT_TENSORS" value: {string_value:"no"}}
+dynamic_batching {
+  preferred_batch_size: [ 1 ]
+}
+
+output [
+  {
+    name: "logits"
+    data_type: TYPE_FP32
+    dims: [ -1, 384, 2 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 3, -1 ]
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 1 ]
+  },
+  {
+    count: 2
+    kind: KIND_GPU
+    gpus: [ 2 ]
+  }
+]

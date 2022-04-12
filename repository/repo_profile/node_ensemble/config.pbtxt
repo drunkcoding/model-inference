@@ -1,0 +1,49 @@
+name: "node_ensemble"
+platform: "ensemble"
+
+input [
+  {
+    name: "input"
+    data_type: TYPE_FP32
+    dims: [ -1 ]
+  }
+]
+
+parameters: { key: "FORCE_CPU_ONLY_INPUT_TENSORS" value: {string_value:"no"}}
+
+output [
+  {
+    name: "output"
+    data_type: TYPE_FP32
+    dims: [ -1 ]
+  }
+]
+
+ensemble_scheduling {
+  step [ 
+    {
+      model_name: "node_start"
+      model_version: -1
+      input_map {
+        key: "input"
+        value: "input"
+      }
+      output_map {
+        key: "output"
+        value: "output_start"
+      }
+    },
+    {
+      model_name: "node_end"
+      model_version: -1
+      input_map {
+        key: "input"
+        value: "output_start"
+      }
+      output_map {
+        key: "output"
+        value: "output"
+      }
+    }
+  ]
+}

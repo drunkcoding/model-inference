@@ -213,12 +213,8 @@ writer_backend.remote = remote
 # writer_backend.step = batch_size
 writer_backend.start()
 
-
-
 pool = mp.Pool(processes=NUM_PROC)
-
 pool.map(test_body, [i for i in range(NUM_PROC)])
-
 pool.join()
 writer_backend.stop()
 

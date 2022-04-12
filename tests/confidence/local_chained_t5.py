@@ -66,6 +66,7 @@ print(label_tokens)
 # exit()
 
 home_dir = os.path.expanduser(("~"))
+# home_dir = "/mnt/raid1nvme1"
 # base_dir = "/mnt/yavin/checkpoints"
 base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs", "google"))
 
@@ -78,9 +79,9 @@ model_keys = [
 
 device_map = [
     "cuda:0",
-    "cuda:0",
-    "cuda:0",
-    "cuda:0",
+    "cuda:1",
+    "cuda:2",
+    "cuda:3",
 ]
 
 energy_discount_factor = [
@@ -277,6 +278,10 @@ def agg_logits(hist, curr, pos, device):
         return hist * (1 - alpha) + curr * alpha
     return curr
 
+with torch.no_grad():
+    key = model_keys[-1]
+    for batch in tqdm(train_dataloader, desc="Collect Train Data"):
+        logits = model_inference(models[key], batch, device=model_device[key])
 
 with torch.no_grad():
     for batch in tqdm(train_dataloader, desc="Collect Train Data"):

@@ -1,0 +1,70 @@
+{
+    "bert-tiny-5-finetuned-squadv2": {
+        "threshold": 0.69345801,
+        "temperature": 1.0996,
+        "parallel_stages": 1,
+        "path": "mrm8488/bert-tiny-5-finetuned-squadv2",
+        "util_params": [
+            18.11607223859835,
+            -9.89992851675549
+        ]
+    },
+    "bert-mini-5-finetuned-squadv2": {
+        "threshold": 0.81246093,
+        "temperature": 1.4364,
+        "parallel_stages": 1,
+        "path": "mrm8488/bert-mini-5-finetuned-squadv2",
+        "util_params": [
+            1.1588301385550015,
+            30.732234459000356
+        ]
+    },
+    "distilbert-base-uncased": {
+        "threshold": 0.81599716,
+        "temperature": 1.6280,
+        "parallel_stages": 1,
+        "path": "twmkn9/distilbert-base-uncased-squad2",
+        "util_params": [
+            0.682781420544279,
+            1.2501133241832014
+        ]
+    },
+    "bert-small-2-finetuned-squadv2": {
+        "threshold": 0.81599716,
+        "temperature": 1.6280,
+        "parallel_stages": 1,
+        "path": "mrm8488/bert-small-2-finetuned-squadv2",
+        "util_params": [
+            0.682781420544279,
+            1.2501133241832014
+        ]
+    },
+    "bert-base-uncased": {
+        "threshold": 0.59146146146146144,
+        "temperature": 1.6859,
+        "parallel_stages": 1,
+        "path": "twmkn9/bert-base-uncased-squad2",
+        "util_params": [
+            -0.10091379559455495,
+            1.9811835414331667
+        ]
+    },
+    "bert-large-uncased": {
+        "threshold": 0.0,
+        "temperature": 1.4153,
+        "parallel_stages": 1,
+        "path": "madlag/bert-large-uncased-squadv2",
+        "util_params": [
+            -0.2528745968250984,
+            1.2258044071976404
+        ]
+    },
+    "bert_ensemble": {
+        "ensembles": [
+            "bert-base-uncased",
+            "bert-large-uncased"
+        ],
+        "alpha": 0.6
+    },
+    "base_dir": "/mnt/raid0nvme1/HuggingFace"
+}

@@ -1,0 +1,28 @@
+name: "node_start"
+backend: "python"
+
+input [
+  {
+    name: "input"
+    data_type: TYPE_FP32
+    dims: [ -1 ]
+  }
+]
+
+parameters: { key: "FORCE_CPU_ONLY_INPUT_TENSORS" value: {string_value:"no"}}
+
+output [
+  {
+    name: "output"
+    data_type: TYPE_FP32
+    dims: [ -1 ]
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 6 ]
+  }
+]

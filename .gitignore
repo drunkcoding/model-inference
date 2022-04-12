@@ -3,6 +3,16 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+*.csv
+*.tar.gz
+eval_*
+utils/
+
+baseline.json
+*.nsys-rep
+profile/*.json
+*.txt
+*.db
 tritonserver/
 figures/
 data/

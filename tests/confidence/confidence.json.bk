@@ -1,0 +1,29 @@
+{
+    "t5": {
+        "t5-small-lm-adapt": 0.44,
+        "t5-base-lm-adapt": 0.01,
+        "t5-large-lm-adapt": 0.01,
+        "t5-xl-lm-adapt": 0.54
+    },
+    "vit": {
+        "vit-tiny-patch16-224": 0.25,
+        "vit-small-patch16-224": 0.1,
+        "vit-base-patch16-224": 0.55,
+        "vit-large-patch16-224": 0.1
+    },
+    "gpt": {
+        "distilgpt2": 0.1,
+        "gpt2": 0.05,
+        "gpt2-medium": 0.1,
+        "gpt2-large": 0.15,
+        "gpt2-xl": 0.1,
+        "gpt-j-6B": 0.5
+    },
+    "bert": {
+        "bert-tiny-5-finetuned-squadv2": 0.25,
+        "bert-mini-5-finetuned-squadv2": 0.05,
+        "distilbert-base-uncased": 0.05,
+        "bert-base-uncased": 0.25,
+        "bert-large-uncased": 0.4
+    }
+}

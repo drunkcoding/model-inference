@@ -1,0 +1,47 @@
+name: "gpt_e3p1"
+backend: "python"
+
+input [
+  {
+    name: "hidden_state"
+    data_type: TYPE_INT64
+    dims: [ -1, 512 ]
+  },
+  {
+    name: "attention_mask"
+    data_type: TYPE_FP32
+    dims: [ -1, 512 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 6, -1 ]
+  },
+  {
+    name: "logits"
+    data_type: TYPE_FP32
+    dims: [ -1, 50257 ]
+  }
+]
+
+parameters: { key: "FORCE_CPU_ONLY_INPUT_TENSORS" value: {string_value:"no"}}
+
+output [
+  {
+    name: "logits"
+    data_type: TYPE_FP32
+    dims: [ -1, 50257 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 6, -1 ]
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+  }
+]

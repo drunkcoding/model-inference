@@ -1,0 +1,1 @@
+kill -9 $(ps aux | grep triton | grep -v grep | awk '{ print $2 }')

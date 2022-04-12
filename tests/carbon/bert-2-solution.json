@@ -1,0 +1,13 @@
+{
+    "bert-small-2-finetuned-squadv2": [
+        [0, 0, 0, 0]
+    ],
+    "bert-base-uncased": [
+        [1, 0, 0, 0],
+        [1, 0, 1, 1]
+    ],
+    "bert-large-uncased": [
+        [2, 0, 0, 1]
+    ],
+    "batch_size": [1, 1, 1]
+}

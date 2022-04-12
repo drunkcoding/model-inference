@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from color_scale import color_palette
 
-font = {"size": 96}
+font = {"size": 64}
 matplotlib.rc("font", **font)
 sns.set(palette="colorblind")
 
@@ -25,10 +25,10 @@ plt.axhline(y=.8, color='r', linestyle='--', linewidth=12)
 handles, labels = ax.get_legend_handles_labels()
 ax.legend(handles=handles, labels=labels)
 
-plt.xticks(fontsize=96)
-plt.yticks(fontsize=96)
-plt.xlabel("Number of Model", fontsize=96)
-plt.ylabel("Latency", fontsize=96)
-plt.legend(fontsize=96)
+plt.xticks(fontsize=64)
+plt.yticks(fontsize=64)
+plt.xlabel("Number of Model", fontsize=64)
+plt.ylabel("Latency", fontsize=64)
+plt.legend(fontsize=64)
 
 plt.savefig("plots/latency_ovhd_bar.png", bbox_inches="tight")

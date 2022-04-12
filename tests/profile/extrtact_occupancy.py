@@ -8,7 +8,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from hfutils.cuda import CudaOccupancyCalculator
 
-
 calculator = CudaOccupancyCalculator("8.0")
 
 batches = [1,2,4,8,16,32,64,128]

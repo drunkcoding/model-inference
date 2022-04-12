@@ -8,6 +8,7 @@ from tqdm import tqdm
 import os
 
 from transformers import AutoModelWithLMHead, GPT2Tokenizer
+from transformers.utils.model_parallel_utils import get_device_map
 
 from hfutils.logger import Logger
 from hfutils.monte_carlo import monte_carlo_bounds
@@ -15,12 +16,13 @@ from hfutils.calibration import temperature_scale, temperature_scaling_helper, a
 
 loss_fct = CrossEntropyLoss()
 
-# val_dataset = load_dataset("lambada")['validation']
-val_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="validation")
+val_dataset = load_dataset("lambada", split="validation")
+# val_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="validation")
 val_dataset = val_dataset.select([x for x in range(500)])
 print(val_dataset)
 
-home_dir = os.path.expanduser("~")
+# home_dir = os.path.expanduser("~")
+home_dir = "/mnt/raid0nvme1"
 base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs"))
 
 model_keys = [
@@ -29,15 +31,16 @@ model_keys = [
     "M",
     "L",
     "XL",
-    # "XXL",
+    "XXL",
 ]
 
 device_map = [
     "cuda:0",
+    "cuda:2",
+    "cuda:2",
+    "cuda:5",
+    "cuda:4",
     "cuda:0",
-    "cuda:1",
-    "cuda:0",
-    "cuda:1",
 ]
 
 energy_discount_factor = [
@@ -46,7 +49,9 @@ energy_discount_factor = [
     10 / 40,
     40 / 40,
     80 / 40,
+    160 / 40,
 ]
+energy_discount_factor = np.cumsum(energy_discount_factor).tolist()
 
 model_paths = [
     f"{home_dir}/HuggingFace/distilgpt2",
@@ -54,6 +59,8 @@ model_paths = [
     f"{home_dir}/HuggingFace/gpt2-medium",
     f"{home_dir}/HuggingFace/gpt2-large",
     f"{home_dir}/HuggingFace/gpt2-xl",
+    # f"{home_dir}/HuggingFace/EleutherAI/gpt-j-6B",
+    f"{home_dir}/HuggingFace/hivemind/gpt-j-6B-8bit",
 ]
 
 tokenizer = GPT2Tokenizer.from_pretrained(
@@ -88,7 +95,7 @@ test = copy.deepcopy(encodings)
 test.input_ids = test.input_ids[:, train_split:]
 
 def load_encodings(encodings):
-    max_length = 1024
+    max_length = 512
     stride = 128
 
     for i in tqdm(range(0, encodings.input_ids.size(1), stride)):
@@ -114,16 +121,37 @@ def model_inference(model, input_ids, temperature=None, device="cuda:0"):
         logits = temperature_scale(logits, temperature)
     return logits
 
+NUM_TOP = 1
+acc_metric = load_metric("accuracy")
 def compute_metrics(outputs, labels):
     cnt = 0
-    # _, top_idx = torch.topk(logits, 10)
-    for i, logits in enumerate(outputs):
-        topk, top_idx = torch.topk(logits, 10)
-        if torch.any(top_idx == labels[i]):
-            cnt += 1
+    # print(outputs.shape, labels.shape)
+    outputs = outputs[:, 128:-1, :]
+    labels = labels[:, 129:]
+    idx = labels != -100
+    outputs = outputs[idx, :]
+    labels = labels[idx]
+
+    # _, idx  = torch.max(outputs, dim=-1)
+    
+    # return acc_metric.compute(predictions=idx.view(-1), references=labels.view(-1)) 
+
+    # print(outputs.shape, labels.shape)
+
+    topk, top_idx = torch.topk(outputs, NUM_TOP)
+    top_idx = top_idx.reshape((-1,NUM_TOP))
+    labels = labels.flatten().repeat((NUM_TOP, 1)).transpose(0,1)
+    # _, top_idx = torch.topk(logits, NUM_TOP)
+    # print(top_idx.shape, labels.shape)
+
+    # for i, logits in enumerate(outputs):
+    #     if i < 128: continue
+    #     topk, top_idx = torch.topk(logits, NUM_TOP)
+    #     if torch.any(top_idx == labels[i]):
+    #         cnt += 1
 
     return {
-        "top10EM": cnt / len(labels)
+        f"top{NUM_TOP}EM": torch.sum(labels == top_idx) / labels.shape[0]  # cnt / (len(labels) - 128)
     }
 
 def compute_preplexity(outputs, labels, trg_lens):
@@ -178,6 +206,10 @@ for key in model_keys:
     models[key] = AutoModelWithLMHead.from_pretrained(
         model_paths[key]
     )
+    # if key == "XXL":
+    #     models[key].parallelize(get_device_map(len(models[key].transformer.h), [0,2,4,6]))
+    # else:
+    #     models[key] = models[key].to(model_device[key])
     models[key] = models[key].to(model_device[key])
     models[key].eval()
     torch.cuda.empty_cache()
@@ -225,18 +257,20 @@ print(model_outputs[model_keys[0]].shape)
 
 # =============  TRAIN TEMPERATURE =============
 # model_outputs = {
-#     k: v[..., :-1, :] for k,v in model_outputs.items()
+#     k: v[..., :-1, :].reshape(-1, v.shape[-1]) for k,v in model_outputs.items()
 # }
-# labels = labels[..., 1:]
+# labels = labels[..., 1:].reshape(-1)
 
 # model_temperature = temperature_scaling_helper(model_outputs, labels, model_device)
-# print("temperature", model_temperature)
+# logger.info("temperature %s", model_temperature)
 
 # for key in model_keys:
 #     model_outputs[key] = temperature_scale(model_outputs[key], model_temperature[key])
-model_temperature = {
-    k: None for k in model_keys
-}
+temeratures = [1.0, .9334, .9328, .9917, .9931, 1.0]
+model_temperature = dict(zip(model_keys, temeratures))
+# model_temperature = {
+#     k: None for k in model_keys
+# }
 # =============  TRAIN HYPERPARAMETER =============
 
 num_models = len(model_keys)
@@ -250,10 +284,14 @@ def get_hist(model_outputs):
         logits = agg_logits(
             logits if key != model_keys[-1] else None,
             model_outputs[key],
-            0.9
+            0.6
         )
         hist_logits.append(logits)
+        # topk, top_idx = torch.topk(logits, NUM_TOP)
+        # probs, _ = torch.max(m(topk), dim=-1)
         probs, _ = torch.max(m(logits), dim=-1)
+        probs = torch.float_power(probs, 2)
+        
         probs = probs.detach().cpu().numpy()
         hist_probs.append(probs)
 
@@ -286,17 +324,41 @@ def total_reward(threshold):
             if key in model_keys[:-1]
             else np.ones(probs.shape).astype(bool)
         )
+        # # GPT only considers consecutive tokens
+        # for i in range(1, len(processed)):
+        #     processed[i] &= processed[i-1]
+
+        # processed_probs = probs[(~mask) & processed]
+        # reward += np.around(np.sum(processed_probs) / 8.0) * 8
+
         processed_probs = probs[(~mask) & processed]
-        reward += np.around(np.sum(processed_probs) / 8.0) * 8
+        processed_probs = np.round(processed_probs, 2)
+        reward += np.sum(processed_probs)
     
         energy += model_energy[key] * np.count_nonzero(~mask) 
         mask |= processed
     return (reward, -energy)
 
+from sklearn.model_selection import GridSearchCV
+import itertools
+
+# all_permutations = list(itertools.product(np.linspace(0,1, 20, endpoint=True).tolist(), repeat=num_models-1))
+
+# max_score = (-np.inf, -np.inf)
+# brute_threhold = None
+# for permutation in tqdm(all_permutations, desc="brute force"):
+#     threshold = permutation + (0.6, )
+#     score = total_reward(threshold)
+#     if (max_score[0] < score[0]) or (
+#         max_score[0] == score[0] and max_score[1] < score[1]
+#     ):
+#         max_score = score
+#         brute_threhold = permutation
+# print(brute_threhold)
 
 threshold_bounds = monte_carlo_bounds(
     total_reward,
-    [(0.25, 1.0)] * (num_models),
+    [(0, 1.0)] * (num_models),
     [("reward", float), ("energy", float)],
     n=1000,
     tops=40,
@@ -305,10 +367,12 @@ threshold_bounds = monte_carlo_bounds(
 mc_threshold = np.mean(threshold_bounds, axis=1)
 alpha = mc_threshold[-1]
 mc_threshold = mc_threshold[:-1]
+mc_threshold = [0.29986088, 0.301915, 0.20604349, 0.11324232, 0.11]
+# mc_threshold = [0.50941984, 0.45941984, 0.50941984, 0.42561829]
 logger.info("Threshold Bounds %s", threshold_bounds)
 logger.info("Final Thresholds %s", mc_threshold)
 logger.info("Alpha %s", alpha)
-
+# mc_threshold = brute_threhold
 
 # ============= MODEL INFERENCE WITH HYPERPARAMETER =================
 model_outputs = {}
@@ -335,8 +399,8 @@ for key in model_keys:
     model_outputs[key] = all_logits
     model_trg_len[key] = all_trg_len
 
-    logger.info("indv %s %s", key, compute_preplexity(all_logits, labels, all_trg_len))
-    # logger.info("indv %s %s", key, compute_metrics(all_logits, labels))
+    # logger.info("indv %s %s", key, compute_preplexity(all_logits, labels, all_trg_len))
+    logger.info("indv %s %s", key, compute_metrics(all_logits, labels))
 
 test_len = len(labels)
 
@@ -361,6 +425,9 @@ for i, key in enumerate(model_keys):
         if key in model_keys[:-1]
         else np.ones(probs.shape).astype(bool)
     )
+    # # GPT only considers consecutive tokens
+    # for k in range(1, len(processed)):
+    #     processed[k] &= processed[k-1]
 
     print(mask.shape, probs.shape, processed.shape, hist_logits[i].shape)
     print(((~mask) & processed).shape)
@@ -369,18 +436,18 @@ for i, key in enumerate(model_keys):
     logger.info(
         "%s process count (%s) %s",
         key, test_len,
-        np.count_nonzero((~mask) & processed),
+        np.count_nonzero((~mask) & processed)
     )
 
-    final_logits[(~mask) & processed, :] = delegated_logit.to(final_logits.device)
+    final_logits[(~mask) & processed, :] = delegated_logit.to(final_logits.device)[:, :50257]
     mask |= processed
 
 logger.info("***** Collaborative Eval results *****")
-logger.info(
-    "Collaborative metrics %s",
-    compute_preplexity(final_logits, labels, model_trg_len[model_keys[0]])
-)
 # logger.info(
 #     "Collaborative metrics %s",
-#     compute_metrics(final_logits, labels)
+#     compute_preplexity(final_logits, labels, model_trg_len[model_keys[0]])
 # )
+logger.info(
+    "Collaborative metrics %s",
+    compute_metrics(final_logits, labels)
+)

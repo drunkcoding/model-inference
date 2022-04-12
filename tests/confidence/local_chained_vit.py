@@ -44,15 +44,13 @@ from hfutils.temperature_scaling import ModelWithTemperature
 from hfutils.monte_carlo import monte_carlo_bounds
 from hfutils.calibration import temperature_scale, temperature_scaling
 
-
-args = HfArguments()
-data_args = args.data_args
-task_name  = args.data_args.task_name
+task_name  = "imagenet"
 # print(pos_token, neg_token)
 # print(tokenizer(list(TASK_TO_LABELS[task_name])).input_ids)
 # exit()
 
-home_dir = os.path.expanduser(("~"))
+# home_dir = os.path.expanduser(("~"))
+home_dir = "/mnt/raid0nvme1"
 base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs", "google"))
 
 model_keys = [
@@ -119,15 +117,13 @@ print("======ImageNet==========")
 # Load the accuracy metric from the datasets package
 metric = datasets.load_metric("accuracy")
 
-home = os.path.expanduser('~')
-dataset_path = os.path.join(home, "ImageNet")
+dataset_path = os.path.join(home_dir, "ImageNet")
 
 model_dataset = {}
 for key in model_keys:
     train, test = split_train_test(
         ImageNet(
             dataset_path, 
-            download=False, 
             split="val", 
             transform=ViTFeatureExtractorTransforms(
                 model_paths[key], 
@@ -143,14 +139,14 @@ for key in model_keys:
         train,
         shuffle=False,
         collate_fn=vit_collate_fn,
-        batch_size=data_args.train_bsz,
+        batch_size=7,
     )
 
     test_dataloader = DataLoader(
         test,
         shuffle=False,
         collate_fn=vit_collate_fn,
-        batch_size=data_args.eval_bsz,
+        batch_size=16,
     )
 
     model_dataset[key] = (train_dataloader, test_dataloader)
@@ -173,6 +169,8 @@ num_labels = 0
 @torch.no_grad()
 def model_inference(model, batch, temperature=None, device="cuda:0"):
     pixel_values = batch["pixel_values"].to(device)
+    # print(pixel_values.shape)
+    # exit()
     outputs = model(pixel_values, return_dict=True)
     logits = outputs.logits
     if temperature is not None:
@@ -298,9 +296,6 @@ num_labels = 0
 
 model_metrics = {}
 for key in model_keys:
-    # model_metrics[key] = load_metric(
-    #     args.data_args.dataset_name, args.data_args.task_name
-    # )
     model_metrics[key] = load_metric("accuracy")
 
 model_labels = dict(zip(model_keys, [list() for _ in range(n_models)]))

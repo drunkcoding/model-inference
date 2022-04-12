@@ -1,0 +1,258 @@
+{
+    "t5-small-lm-adapt_sst2": {
+        "threshold": 0.80479069854041,
+        "temperature": 1.5723953247070312,
+        "ensemble_pos": 0,
+        "parallel_stages": 2,
+        "count": 2,
+        "devices": [ 0, 1 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-small-lm-adapt/sst2/checkpoint-5540"
+    },
+    "t5-base-lm-adapt_sst2": {
+        "threshold": 0.8273653301771874,
+        "temperature": 1.2898175716400146,
+        "ensemble_pos": 1,
+        "parallel_stages": 1,
+        "count": 2,
+        "devices": [ 0, 1 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-base-lm-adapt/sst2/checkpoint-1860"
+    },
+    "t5-large-lm-adapt_sst2": {
+        "threshold": 0.676005527292437,
+        "temperature": 1.2328674793243408,
+        "ensemble_pos": 2,
+        "parallel_stages": 1,
+        "count": 2,
+        "devices": [ 0, 1 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-large-lm-adapt/sst2/checkpoint-1780"
+    },
+    "t5-xl-lm-adapt_sst2": {
+        "threshold": 0.0,
+        "temperature": 1.3715057373046875,
+        "ensemble_pos": 3,
+        "parallel_stages": 1,
+        "count": 2,
+        "devices": [ 0, 1 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-xl-lm-adapt/sst2/checkpoint-1380"
+    },
+    "t5-small-lm-adapt_sst2_r2": {
+        "threshold": 0.80479069854041,
+        "temperature": 1.5723953247070312,
+        "ensemble_pos": 0,
+        "parallel_stages": 1,
+        "count": 2,
+        "devices": [ 0 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-small-lm-adapt/sst2/checkpoint-5540"
+    },
+    "t5-small-lm-adapt_sst2_r": {
+        "threshold": 0.80479069854041,
+        "temperature": 1.5723953247070312,
+        "ensemble_pos": 0,
+        "parallel_stages": 2,
+        "count": 1,
+        "devices": [ 0, 1 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-small-lm-adapt/sst2/checkpoint-5540"
+    },
+    "t5-base-lm-adapt_sst2_r2": {
+        "threshold": 0.8273653301771874,
+        "temperature": 1.2898175716400146,
+        "ensemble_pos": 1,
+        "parallel_stages": 1,
+        "count": 2,
+        "devices": [ 0 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-base-lm-adapt/sst2/checkpoint-1860"
+    },
+    "t5-large-lm-adapt_sst2_r2": {
+        "threshold": 0.676005527292437,
+        "temperature": 1.2328674793243408,
+        "ensemble_pos": 2,
+        "parallel_stages": 1,
+        "count": 2,
+        "devices": [ 0 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-large-lm-adapt/sst2/checkpoint-1780"
+    },
+    "t5-xl-lm-adapt_sst2_r2": {
+        "threshold": 0.0,
+        "temperature": 1.3715057373046875,
+        "ensemble_pos": 3,
+        "parallel_stages": 1,
+        "count": 2,
+        "devices": [ 0 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-xl-lm-adapt/sst2/checkpoint-1380"
+    },
+    "t5-xl-lm-adapt_sst2_r": {
+        "threshold": 0.0,
+        "temperature": 1.3715057373046875,
+        "ensemble_pos": 3,
+        "parallel_stages": 4,
+        "count": 1,
+        "devices": [ 0, 1, 2, 3 ],
+        "ckpt": "/jmain02/home/J2AD002/jxm12/lxx22-jxm12/model-finetune/outputs/t5-xl-lm-adapt/sst2/checkpoint-1380"
+    },
+    "t5_sst2_ensemble": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-small-lm-adapt_sst2",
+            "t5-base-lm-adapt_sst2",
+            "t5-large-lm-adapt_sst2",
+            "t5-xl-lm-adapt_sst2"
+        ],
+        "weights": [
+            1.0,
+            0.6,
+            0.6,
+            1.0
+        ]
+    },
+    "t5_sst2_test": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-small-lm-adapt_sst2",
+            "t5-base-lm-adapt_sst2"
+        ],
+        "weights": [
+            1.0,
+            0.6
+        ]
+    },
+    "t5_sst2_S": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-small-lm-adapt_sst2"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_M": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-base-lm-adapt_sst2"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_L": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-large-lm-adapt_sst2"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_XL": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-xl-lm-adapt_sst2"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_S_r2": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-small-lm-adapt_sst2_r2"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_XL_r": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-xl-lm-adapt_sst2_r"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_S_r": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-small-lm-adapt_sst2_r"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_M_r2": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-base-lm-adapt_sst2_r2"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_L_r2": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-large-lm-adapt_sst2_r2"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5_sst2_XL_r2": {
+        "skip_connection": true,
+        "scheduler": "rr",
+        "ensembles": [
+            "t5-xl-lm-adapt_sst2_r2"
+        ],
+        "weights": [
+            1.0
+        ]
+    },
+    "t5-small-lm-adapt_cola": {
+        "threshold": 0.8025750481822249,
+        "temperature": 2.2339532375335693,
+        "ensemble_pos": 0,
+        "parallel_stages": 1
+    },
+    "t5-base-lm-adapt_cola": {
+        "threshold": 0.79877357,
+        "temperature": 1.6409,
+        "ensemble_pos": 1,
+        "parallel_stages": 1
+    },
+    "t5-large-lm-adapt_cola": {
+        "threshold": 0.84909194,
+        "temperature": 1.0315,
+        "ensemble_pos": 2,
+        "parallel_stages": 1
+    },
+    "t5-xl-lm-adapt_cola": {
+        "threshold": 0.0,
+        "temperature": 1.4578,
+        "ensemble_pos": 3,
+        "parallel_stages": 2
+    },
+    "t5_cola_ensemble": {
+        "ensembles": [
+            "t5-small-lm-adapt_cola",
+            "t5-base-lm-adapt_cola",
+            "t5-large-lm-adapt_cola",
+            "t5-xl-lm-adapt_cola"
+        ],
+        "weights": [
+            1.0,
+            0.6,
+            0.6,
+            1.0
+        ]
+    }
+}
