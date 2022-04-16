@@ -16,7 +16,7 @@ from datasets import Dataset, concatenate_datasets
 from datasets import load_dataset, load_metric
 
 from tqdm import tqdm
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tritonclient.utils import *
 import tritonclient.http as httpclient
 from sklearn.model_selection import train_test_split
@@ -47,6 +47,8 @@ eval_dataset = ImageNet(
 )
 num_labels = len(eval_dataset)
 
+rnd_seed = 106033
+np.random.seed(rnd_seed)
 
 m = torch.nn.Softmax(dim=1)
 
@@ -55,10 +57,18 @@ remote = "localhost"
 inputs_list = []
 label_list = []
 
-batch_size = 32
+batch_size = 8
+
+index = np.array([x for x in range(len(eval_dataset))])
+np.random.shuffle(index)
+
+total_len = len(index)
+test_len = int(total_len * 0.4)
+
+dataset = Subset(eval_dataset, index[test_len:])
 
 eval_dataloader = DataLoader(
-    eval_dataset, shuffle=True, collate_fn=vit_collate_fn, batch_size=batch_size,
+    eval_dataset, shuffle=False, collate_fn=vit_collate_fn, batch_size=batch_size, num_workers=20
 )
 
 for step, batch in enumerate(tqdm(eval_dataloader)):
@@ -72,7 +82,7 @@ for step, batch in enumerate(tqdm(eval_dataloader)):
     batch_mask[0, :] = 1
     batch_mask = batch_mask.astype(bool)
 
-    if step * batch_size > 100: break
+    if step * batch_size > 2000: break
 
     inputs = [
         httpclient.InferInput(
@@ -97,7 +107,7 @@ for step, batch in enumerate(tqdm(eval_dataloader)):
 
 import multiprocessing as mp
 
-NUM_PROC = 8
+NUM_PROC = 3
 barrier = mp.Barrier(NUM_PROC)
 
 def test_body(pid):
@@ -120,10 +130,10 @@ def test_body(pid):
             # time.sleep(1)
     print(metric.compute())
 
-start_energy = sum(list(get_energy_by_group().values()))
+start_energy = np.array(list(get_energy_by_group().values()))
 pool = mp.Pool(processes=NUM_PROC)
 pool.map(test_body, [i for i in range(NUM_PROC)])
 pool.close()
 pool.join()
-end_energy = sum(list(get_energy_by_group().values()))
+end_energy = np.array(list(get_energy_by_group().values()))
 print(end_energy - start_energy)

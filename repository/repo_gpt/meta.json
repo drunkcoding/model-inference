@@ -11,7 +11,7 @@
         ]
     },
     "gpt2": {
-        "threshold": 0.90377271,
+        "threshold": 0.4141414141414142,
         "temperature": 1.0,
         "parallel_stages": 1,
         "path": "gpt2",
@@ -22,7 +22,7 @@
         ]
     },
     "gpt2-medium": {
-        "threshold": 0.9121192,
+        "threshold": 0.15151515151515152,
         "temperature": 1.0,
         "parallel_stages": 1,
         "path": "gpt2-medium",
@@ -33,9 +33,9 @@
         ]
     },
     "gpt2-large": {
-        "threshold": 0.536893,
+        "threshold": 0.0,
         "temperature": 1.0,
-        "parallel_stages": 1,
+        "parallel_stages": 2,
         "path": "gpt2-large",
         "type": "gpt",
         "util_params": [
@@ -67,12 +67,11 @@
     },
     "gpt_ensemble": {
         "ensembles": [
+            "gpt2",
             "gpt2-medium",
-            "gpt2-large",
-            "gpt2-xl",
             "gpt-j-6B"
         ],
-        "alpha": 0.6
+        "alpha": 1.0
     },
     "base_dir": "/mnt/raid0nvme1/HuggingFace"
 }

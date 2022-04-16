@@ -43,6 +43,6 @@ instance_group [
   {
     count: 1
     kind: KIND_GPU
-    gpus: [ 2 ]
+    gpus: [ 0 ]
   }
 ]

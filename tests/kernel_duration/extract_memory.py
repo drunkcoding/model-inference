@@ -15,6 +15,8 @@ mem_data = {}
 latency = {}
 latency_config = {}
 
+energy_config = {}
+
 for file in files:
     filename = os.path.join(base_dir, f"{file}.log")
     with open(filename, "r") as fp:
@@ -34,14 +36,30 @@ for file in files:
                 mem_data[basename] = []
                 latency[basename] = []
                 latency_config[basename] = {}
+                energy_config[basename] = {}
+
+            while not "energy" in lines[idx]:
+                # print(lines[idx])
+                idx += 1
+                if idx >= len(lines): break
+            if idx >= len(lines): break
+
+            group = re.findall(r"energy total (\d+.\d+), request (\d+.\d+), sample (\d+.\d+)", lines[idx])
+            total, request, sample = group[0]
+            reserved = float(total)
+            allocated = float(request)
+            total = float(sample)   
+            energy_config[basename][batch_size] = [float(v) for v in group[0]]           
 
             while not "memory" in lines[idx]:
                 idx += 1
+                if idx >= len(lines): break
+            if idx >= len(lines): break
             group = re.findall(r"memory reserved (\d+), allocated (\d+), total (\d+)", lines[idx])
             reserved, allocated, total = group[0]
             reserved = int(reserved)
             allocated = int(allocated)
-            total = int(total)        
+            total = int(total)
 
             mem_data[basename].append((batch_size, allocated / 1024**2))
             # print(basename, batch_size, data[basename])
@@ -50,6 +68,8 @@ for file in files:
             
             while not "mean" in lines[idx]:
                 idx += 1
+                if idx >= len(lines): break
+            if idx >= len(lines): break
 
             mean_latency = float(lines[idx].split(" ")[-1]) * 1000
             latency[basename].append((batch_size, mean_latency))
@@ -77,6 +97,9 @@ with open("tests/kernel_duration/memory.json", "w") as fp:
 
 with open("tests/kernel_duration/latency.json", "w") as fp:
     json.dump(latency_config, fp)
+
+with open("tests/kernel_duration/energy.json", "w") as fp:
+    json.dump(energy_config, fp)
 
 with open("tests/kernel_duration/memory_params.json", "w") as fp:
     json.dump(memory_params, fp)

@@ -18,7 +18,7 @@ from transformers import (
     default_data_collator,
 )
 import pandas as pd
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
@@ -40,7 +40,7 @@ base_dir = os.path.join(home_dir, os.path.join("model-finetune", "outputs", "goo
 model_keys = [
     # "XS",
     # "S",
-    "M",
+    # "M",
     "L",
     "XL",
 ]
@@ -48,7 +48,7 @@ model_keys = [
 model_names = [
     # "bert-tiny-5-finetuned-squadv2",
     # "bert-mini-5-finetuned-squadv2",
-    "bert-small-2-finetuned-squadv2",
+    # "bert-small-2-finetuned-squadv2",
     "bert-base-uncased",
     "bert-large-uncased",
 ]
@@ -56,7 +56,7 @@ model_names = [
 device_map = [
     # "cuda:6",
     # "cuda:6",
-    "cuda:6",
+    # "cuda:6",
     "cuda:6",
     "cuda:6",
 ]
@@ -64,7 +64,7 @@ device_map = [
 model_paths = [
     # f"{home_dir}/HuggingFace/mrm8488/bert-tiny-5-finetuned-squadv2",
     # f"{home_dir}/HuggingFace/mrm8488/bert-mini-5-finetuned-squadv2",
-    f"{home_dir}/HuggingFace/mrm8488/bert-small-2-finetuned-squadv2",
+    # f"{home_dir}/HuggingFace/mrm8488/bert-small-2-finetuned-squadv2",
     f"{home_dir}/HuggingFace/twmkn9/bert-base-uncased-squad2",
     f"{home_dir}/HuggingFace/madlag/bert-large-uncased-squadv2",
 ]
@@ -72,7 +72,10 @@ tokenizer = AutoTokenizer.from_pretrained(
     f"{home_dir}/HuggingFace/bert-base-uncased", use_fast=True,
 )
 
-val_dataset = load_dataset("squad_v2", split="validation")
+val_dataset = concatenate_datasets(
+    [load_dataset("squad_v2", split="validation"),load_dataset("squad_v2", split="train")]
+).shuffle()
+val_dataset = val_dataset.select(range(10000))
 column_names = val_dataset.column_names
 
 dataset = val_dataset.map(
@@ -80,7 +83,7 @@ dataset = val_dataset.map(
         prepare_train_features, column_names=column_names, tokenizer=tokenizer
     ),
     batched=True,
-    batch_size=-1,
+    num_proc=10,
     remove_columns=column_names,
     desc="Running tokenizer on training dataset",
 )
@@ -179,5 +182,5 @@ profile_thresholds(
     model_latency,
     model_names,
     all_thresholds,
-    "bert-3",
+    "bert-2-train",
 )

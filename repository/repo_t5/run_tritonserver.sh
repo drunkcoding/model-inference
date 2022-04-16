@@ -1,6 +1,6 @@
 #!/bin/bash
 
-type="gpt"
+type="t5"
 
 tritonserver --model-repository ${HOME}/model-inference/repository/repo_${type}/ \
 --backend-directory ${HOME}/.local/opt/tritonserver/backends/ \
