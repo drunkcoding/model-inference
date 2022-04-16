@@ -121,6 +121,11 @@ def get_energy_by_group():
         energy_groups[k] = float(energy_groups[k])
     return energy_groups
 
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(('8.8.8.8', 1))
+host_ip = s.getsockname()[0]
+
 
 start_energy = sum(list(get_energy_by_group().values()))
 inference_count = 0
@@ -134,7 +139,7 @@ for step, batch in enumerate(RepeatingLoader(load_encodings(encodings))):
     if outputs != None:
         inference_count += 1
     # print(local_rank, step, outputs if outputs is None else outputs.size())
-    end_time = time.perf_counter()
+    end_time  = time.perf_counter()
     if local_rank == 0:
         logger.critical(
             "(%s) start_time %s, end_time %s, diff %s",

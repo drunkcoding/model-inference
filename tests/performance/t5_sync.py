@@ -41,6 +41,8 @@ from datasets import load_dataset, load_metric
 from torch.utils.data import DataLoader
 
 from hfutils.constants import TASK_TO_KEYS, TASK_TO_LABELS
+from hfutils.measure import get_energy_by_group
+from hfutils.loader import t5_preprocess_function, load_glue_val, load_glue_train
 
 logger = logging.getLogger(__name__)
 
@@ -99,67 +101,76 @@ def preprocess_function(examples, task_name):
     return result
 
 
+rnd_seed = 106033
+
+preprocess_function = partial(
+    t5_preprocess_function, tokenizer=tokenizer, padding="max_length", max_length=128,
+)
+dataset = load_glue_val(preprocess_function).shuffle(seed=rnd_seed)
+data_collator = DataCollatorForSeq2Seq(tokenizer)
+
+batch_size = 1
+
+
+dataloader = DataLoader(dataset, collate_fn=data_collator, batch_size=batch_size)
+
+from hfutils.constants import token2label
+T5_TASK_LABELS = [1176, 6136, 59]
+
 inputs_list = []
 label_list = []
-for task_key in TASK_TO_LABELS.keys():
-    dataset = load_dataset("glue", task_key)
-    # print("glue", task_key, dataset)
-    dataset = dataset.map(
-        partial(preprocess_function, task_name=task_key),
-        batched=True,
-        desc="Running tokenizer on dataset",
-        remove_columns=["idx", "label"] + list(TASK_TO_KEYS[task_key]),
-    )
-    eval_name = "validation_matched" if task_key == "mnli" else "validation"
-    eval_dataset = dataset[eval_name]
+for step, batch in enumerate(tqdm(dataloader)):
+    input_ids = batch["input_ids"].numpy()
+    attention_mask = batch["attention_mask"].numpy()
+    label = token2label(batch["labels"][:, 0], T5_TASK_LABELS)
 
-    batch_size = 1
+    # batch_mask = np.ones((4,batch_size)).astype(bool)
+    batch_mask = np.zeros((4,batch_size))
+    batch_mask[0, :] = 1
+    batch_mask = batch_mask.astype(bool)
 
-    eval_dataloader = DataLoader(eval_dataset, batch_size=batch_size, collate_fn=data_collator, drop_last=True)
+    # print(input_ids.shape, attention_mask.shape, batch_mask.shape)
 
-    for step, batch in enumerate(tqdm(eval_dataloader)):
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
-        batch_mask = np.zeros((4,batch_size))
-        batch_mask[0, :] = 1
-        batch_mask = batch_mask.astype(bool)
-        logits = np.zeros((batch_size, 3)).astype(np.float32)
+    logits = np.zeros((batch_size, 3)).astype(np.float32)
 
-        inputs = [
-            httpclient.InferInput(
-                "encoder_input_ids", input_ids.shape, 
-                np_to_triton_dtype(input_ids.dtype)
-            ),
-            httpclient.InferInput(
-                "encoder_attention_mask",
-                attention_mask.shape,
-                np_to_triton_dtype(attention_mask.dtype),
-            ),
-            httpclient.InferInput(
-                "batch_mask",
-                batch_mask.shape,
-                np_to_triton_dtype(batch_mask.dtype),
-            ),
-            httpclient.InferInput(
-                "logits",
-                logits.shape,
-                np_to_triton_dtype(logits.dtype),
-            ),
-        ]
-        inputs[0].set_data_from_numpy(input_ids)
-        inputs[1].set_data_from_numpy(attention_mask)
-        inputs[2].set_data_from_numpy(batch_mask)
-        inputs[3].set_data_from_numpy(logits)
-        outputs = [
-            httpclient.InferRequestedOutput("logits"),
-            httpclient.InferRequestedOutput("batch_mask"),
-        ]
-        inputs_list.append(inputs)
-        label_list.append(batch['labels'])
+    if step * batch_size > 300: break
+
+    inputs = [
+        httpclient.InferInput(
+            "encoder_input_ids", input_ids.shape, 
+            np_to_triton_dtype(input_ids.dtype)
+        ),
+        httpclient.InferInput(
+            "encoder_attention_mask",
+            attention_mask.shape,
+            np_to_triton_dtype(attention_mask.dtype),
+        ),
+        httpclient.InferInput(
+            "batch_mask",
+            batch_mask.shape,
+            np_to_triton_dtype(batch_mask.dtype),
+        ),
+        httpclient.InferInput(
+            "logits",
+            logits.shape,
+            np_to_triton_dtype(logits.dtype),
+        ),
+    ]
+    inputs[0].set_data_from_numpy(input_ids)
+    inputs[1].set_data_from_numpy(attention_mask)
+    inputs[2].set_data_from_numpy(batch_mask)
+    inputs[3].set_data_from_numpy(logits)
+    outputs = [
+        httpclient.InferRequestedOutput("logits"),
+        httpclient.InferRequestedOutput("batch_mask"),
+    ]
+    inputs_list.append(inputs)
+    label_list.append(label)
+
 
 import multiprocessing as mp
 
-NUM_PROC = 16
+NUM_PROC = 3
 barrier = mp.Barrier(NUM_PROC)
 
 def test_body(pid):
@@ -172,21 +183,22 @@ def test_body(pid):
                 model_name, input, request_id=str(step), outputs=outputs,
             )
 
-            result = response.get_response()
+            # result = response.get_response()
             logits = response.as_numpy("logits")
-            predictions = np.argmax(logits, axis=-1).flatten()
+            # print(logits)
+            predictions = np.argmax(logits, axis=1).flatten()
+            # print(predictions)
             # labels = token2label(batch["labels"][:, 0].flatten(), label_tokens)
             # print(label_list[step], predictions)
             metric.add_batch(predictions=predictions, references=label_list[step])
     print(metric.compute())
 
+start_energy = np.array(list(get_energy_by_group().values()))
 pool = mp.Pool(processes=NUM_PROC)
 pool.map(test_body, [i for i in range(NUM_PROC)])
 pool.close()
 pool.join()
-
-resp = requests.get("http://localhost:8002/metrics")
-print()
-print(resp.content.decode('utf-8'))
+end_energy = np.array(list(get_energy_by_group().values()))
+print(end_energy - start_energy)
 
 

@@ -60,12 +60,14 @@ from hfutils.pipe.distilbert import (
 from hfutils.pipe.gpt import GPT_INPUTS, GPT_OUTPUTS, GPTLMHeadModelPipe
 from hfutils.calibration import temperature_scale
 from hfutils.constants import np_to_torch_dtype
+import dill
 
 m = torch.nn.Softmax(dim=1)
 
 T5_TASK_LABELS = [1176, 6136, 59]  # HACK with GLUE labels
 
 from multiprocessing import shared_memory
+
 
 @dataclass
 class ModelConfig:
@@ -79,6 +81,7 @@ class ModelConfig:
     alpha: Optional[float]  # ensemble exp smooth weight
     temp: Optional[float]  # temperature scaling
     th: Optional[float]  # confidence threshold
+
 
 class TritonPythonModel:
     """Your Python model must use the same class name. Every Python model
@@ -191,7 +194,10 @@ class TritonPythonModel:
 
         self.is_last_stage = self.config.ppos == self.config.stages - 1
         # self.is_last_stage = False # TEST MULTIPLEX
-
+        with open(
+            f"/home/xly/model-inference/inference_dump/{model_name}_calibrator", "rb"
+        ) as f:
+            self.calibrator = dill.load(f)
         # HACK bert tiny model
         if "bert" == self.config.type and "distilbert" in self.config.path:
             self.config.type = "distilbert"
@@ -232,9 +238,9 @@ class TritonPythonModel:
         exec_start_time = time.perf_counter()
         for request in requests:
 
-            request_id = int(request.request_id())
-            correlation_id = int(request.correlation_id())
-
+            # request_id = int(request.request_id())
+            # correlation_id = int(request.correlation_id())
+            # if self.is_last_stage:
             batch_mask = self.parse_input(request, "batch_mask").detach().cpu().numpy()
             hist_outputs = self.parse_input(request, "logits").detach().cpu().numpy()
 
@@ -242,7 +248,7 @@ class TritonPythonModel:
             self.logger.debug("local_mask %s", local_mask)
 
             output_tensors = []
-            request_start_time = time.perf_counter()
+            # request_start_time = time.perf_counter()
             if np.any(local_mask):
                 args = self.parse_request(request, local_mask)
                 outputs = await self.model_inference(
@@ -296,17 +302,29 @@ class TritonPythonModel:
                 self.logger.info(
                     "%s postprocessing time elapsed (%s, %s) %s (ms)",
                     self.model_name,
-                    start_time, end_time,
+                    start_time,
+                    end_time,
                     (end_time - start_time) * 1000,
                 )
 
                 if not isinstance(outputs, Tuple):
                     outputs = (outputs,)
 
-                output_tensors = self.parse_response(outputs) + [
-                    self.parse_output(batch_mask, "batch_mask")
-                ]
+                for output in outputs:
+                    self.logger.debug(
+                        "%s output %s", self.model_name, output.shape,
+                    )
 
+                output_tensors = self.parse_response(outputs)
+                if not self.is_last_stage:
+                    output_tensors += [
+                        self.parse_output(hist_outputs, "logits"),
+                        self.parse_output(batch_mask, "batch_mask"),
+                    ]
+                else:
+                    output_tensors += [
+                        self.parse_output(batch_mask, "batch_mask"),
+                    ]
                 # # TEST MULTIPLEX
                 # inference_response = pb_utils.InferenceResponse(
                 #     output_tensors=[
@@ -319,7 +337,13 @@ class TritonPythonModel:
                     self.parse_output(hist_outputs, "logits"),
                     self.parse_output(batch_mask, "batch_mask"),
                 ]
-            request_end_time = time.perf_counter()
+
+                if "gpt" == self.config.type and not self.is_last_stage:
+                    output_tensors += [
+                        self.parse_output(np.zeros((1, 512, 4096)), "hidden_states"),
+                    ]
+
+            # request_end_time = time.perf_counter()
             # self.executor.submit(
             #     POST,
             #     url=f"http://127.0.0.1:10000/meter/{self.gpu_uuid}",
@@ -348,7 +372,8 @@ class TritonPythonModel:
         self.logger.info(
             "%s requests (%s, %s) %s (ms)",
             self.model_name,
-            exec_end_time, exec_start_time,
+            exec_end_time,
+            exec_start_time,
             (exec_end_time - exec_start_time) * 1000,
         )
         return responses
@@ -373,6 +398,8 @@ class TritonPythonModel:
             input_names = GPT_OUTPUTS[layer_name]
 
         for i, name in enumerate(input_names):
+            if "gpt" == self.config.type and name == "attention_mask":
+                continue
             tensor = self.parse_output(outputs[i], name)
             output_tensors.append(tensor)
 
@@ -427,11 +454,11 @@ class TritonPythonModel:
 
     def update_batch_mask(self, max_prob, mask, local_mask):
         start_time = time.perf_counter()
-        num_next_models = len(mask) - self.config.epos - 1
-        base_step = (self.config.th - 0.25) / num_next_models
+        num_next_models = self.config.ens - self.config.epos - 1
+        base_step = self.config.th / num_next_models
         for skip in range(num_next_models):
-            skip_th_lower = base_step * (num_next_models - 1 - skip) + 0.25
-            skip_th_upper = base_step * (num_next_models - skip) + 0.25
+            skip_th_lower = base_step * (num_next_models - 1 - skip)
+            skip_th_upper = base_step * (num_next_models - skip)
             skip_mask = (
                 (max_prob >= skip_th_lower) & (max_prob < skip_th_upper) & local_mask
             )
@@ -447,7 +474,8 @@ class TritonPythonModel:
         end_time = time.perf_counter()
         self.logger.info(
             "%s update_batch_mask time elapsed (%s,%s) %s (ms)",
-            start_time, end_time,
+            start_time,
+            end_time,
             self.model_name,
             (end_time - start_time) * 1000,
         )
@@ -456,8 +484,11 @@ class TritonPythonModel:
     def offload_mask(self, logits, mask):
         start_time = time.perf_counter()
         probabilities = np.power(softmax(logits, axis=1), 2)
-        prob_mask = np.all(probabilities < self.config.th, axis=1)
-        max_prob = np.max(probabilities, axis=1)
+        max_prob = self.calibrator.calibrate(probabilities)
+        prob_mask = max_prob < self.config.th
+
+        # prob_mask = np.all(probabilities < self.config.th, axis=1)
+        # max_prob = np.max(probabilities, axis=1)
         if "bert" in self.config.type:
             prob_mask = prob_mask.squeeze(1)
             max_prob = max_prob.squeeze(1)
@@ -478,7 +509,8 @@ class TritonPythonModel:
         self.logger.info(
             "%s offload_mask time elapsed (%s, %s) %s (ms)",
             self.model_name,
-            start_time, end_time,
+            start_time,
+            end_time,
             (end_time - start_time) * 1000,
         )
         return combined_mask, max_prob
@@ -494,7 +526,8 @@ class TritonPythonModel:
         self.logger.info(
             "%s model_ensemble time elapsed (%s, %s) %s (ms)",
             self.model_name,
-            start_time, end_time,
+            start_time,
+            end_time,
             (end_time - start_time) * 1000,
         )
         return outputs

@@ -1,0 +1,2 @@
+ubuntu@worker-1 slots=1
+ubuntu@worker-2 slots=1

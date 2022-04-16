@@ -1,4 +1,4 @@
-name: "gpt_e2p0"
+name: "gpt_e2p1"
 backend: "python"
 
 input [
@@ -8,30 +8,25 @@ input [
     dims: [ -1, 50257 ]
   },
   {
-    name: "batch_mask"
-    data_type: TYPE_BOOL
-    dims: [ 6, -1 ]
-  },
-  {
-    name: "input_ids"
-    data_type: TYPE_INT64
-    dims: [ -1, 512 ]
-  },
-  {
     name: "attention_mask"
     data_type: TYPE_INT64
     dims: [ -1, 512 ]
+  },
+  {
+    name: "hidden_states"
+    data_type: TYPE_FP32
+    dims: [ -1, 512, 4096 ]
+  },
+  {
+    name: "batch_mask"
+    data_type: TYPE_BOOL
+    dims: [ 6, -1 ]
   }
 ]
 
 parameters: { key: "FORCE_CPU_ONLY_INPUT_TENSORS" value: {string_value:"no"}}
 
 output [
-  {
-    name: "hidden_states"
-    data_type: TYPE_FP32
-    dims: [ -1, 512, 4096 ]
-  },
   {
     name: "logits"
     data_type: TYPE_FP32
@@ -48,6 +43,6 @@ instance_group [
   {
     count: 1
     kind: KIND_GPU
-    gpus: [ 0 ]
+    gpus: [ 1 ]
   }
 ]

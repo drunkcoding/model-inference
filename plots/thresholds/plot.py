@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import json
 
-type = "vit"
+type = "t5"
 
 font = {"size": 72}
 matplotlib.rc("font", **font)
@@ -26,8 +26,8 @@ latency_max = group_latency.max()
 
 idx = group_latency.transform(min)["latency"] == df["latency"]
 
-print(df[idx][(df.latency <= best_data["latency"]) & (df.accuracy <= best_data["accuracy"])].tail(10))
-
+# print(df[idx][(df.latency <= best_data["latency"]) & (df.accuracy <= best_data["accuracy"])].tail(10))
+print(df[idx].tail(20))
 plt.figure(figsize=(25, 15))
 
 lower_bounds = latency_mean["latency"] - latency_std["latency"] * 3

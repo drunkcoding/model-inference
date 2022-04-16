@@ -5,10 +5,7 @@ import functools
 import io
 import logging
 from multiprocessing.connection import wait
-import random
-import subprocess
-import sys
-import traceback
+import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 from attr import field
 from concurrent.futures import ProcessPoolExecutor
@@ -42,6 +39,7 @@ from scipy.special import softmax
 from transformers import AutoTokenizer
 from tqdm import tqdm
 import gc
+import dill
 
 # ====== ray serve
 import ray
@@ -60,23 +58,21 @@ from hfutils.pipe.t5 import (
     T5_DECODER_INPUTS,
     T5_DECODER_OUTPUTS,
     T5PyTorchPipe,
-    T5PytorchPipeRandom
+    T5PytorchPipeRandom,
 )
 from hfutils.pipe.bert import (
     BERT_INPUTS,
     BERT_OUTPUTS,
     BertPyTorchPipeForQuestionAnswering,
-    BertPytorchPipeRandom
+    BertPytorchPipeRandom,
 )
 from hfutils.pipe.vit import (
     VIT_INPUTS,
     VIT_OUTPUTS,
     ViTPyTorchPipeForImageClassification,
-    ViTPytorchPipeRandom
+    ViTPytorchPipeRandom,
 )
-from hfutils.pipe.gpt import (
-    GPTPytorchPipeRandom
-)
+from hfutils.pipe.gpt import GPTPytorchPipeRandom
 from hfutils.pipe.distilbert import (
     DISTILBERT_INPUTS,
     DISTILBERT_OUTPUTS,
@@ -141,7 +137,7 @@ host_options = {
                 ModelConfig(
                     name=model["name"],
                     path=os.path.join(base_dir, model_config[model["name"]]["path"]),
-                    type=model_config[model["name"]]['type'],
+                    type=model_config[model["name"]]["type"],
                     stages=model_config[model["name"]]["parallel_stages"],
                     ppos=model["stage"],
                     epos=ensembles.index(model["name"]),
@@ -152,7 +148,7 @@ host_options = {
                         "num_gpus": 1 / len(models),
                         "resources": {ins["host"]: 1},
                     },
-                    key = "_".join([ins["host"], model["name"], gid, str(i)])
+                    key="_".join([ins["host"], model["name"], gid, str(i)]),
                 )
                 for i, model in enumerate(models)
             ]
@@ -189,7 +185,7 @@ system_options = SystemOptions(
             epos=i,
             th=model_config[name]["threshold"],
             name=name,
-            parallel_options = [
+            parallel_options=[
                 ParallelOptions(
                     stages=model_config[name]["parallel_stages"],
                     ppos=p,
@@ -199,15 +195,14 @@ system_options = SystemOptions(
                         for models in host.placement.values()
                         for model in models
                         if model.epos == i and model.ppos == p
-                    ]
+                    ],
                 )
                 for p in range(model_config[name]["parallel_stages"])
-            ]
+            ],
         )
         for i, name in enumerate(ensembles)
-    ]
+    ],
 )
-
 
 
 # for idx, name in enumerate(ensembles):
@@ -268,7 +263,6 @@ system_options = SystemOptions(
 @serve.deployment(max_concurrent_queries=10)
 class HServeModel:
     def __init__(self, options: Dict, model_id: int, key: str) -> None:
-        self.logger = Logger(__file__, logging.INFO, 50000000, 5)
 
         # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(VISIBLE_GPUS)
 
@@ -276,15 +270,20 @@ class HServeModel:
         print("gid", gid, ray._private.utils.get_cuda_visible_devices(), flush=True)
         host = ray._private.services.get_node_ip_address()
         print("host", host, flush=True)
-        self.device = torch.cuda.current_device() # torch.device(f"cuda:{gid}")
+        self.device = torch.cuda.current_device()  # torch.device(f"cuda:{gid}")
         print("device", "cuda:" + str(gid), flush=True)
 
         print(gid, host, self.device, flush=True)
         print(options, model_id, key, flush=True)
 
         self.config = options[host].placement[gid][model_id]
-
         print(self.config, flush=True)
+
+        filename = (
+            __file__.split(".")[0]
+            + f"_{self.config.name}_e{self.config.epos}p{self.config.ppos}_{host}"
+        )
+        self.logger = Logger(filename, logging.INFO, 50000000, 5)
 
         self.key = key
 
@@ -307,6 +306,9 @@ class HServeModel:
     #     print(self.gpu_uuid, flush=True)
 
     def _load_model(self):
+
+        print("load model", self.config.type, self.config.name, flush=True)
+
         if "t5" == self.config.type:
             model = T5ForConditionalGeneration.from_pretrained(self.config.path)
             self.model = T5PyTorchPipe(model)
@@ -338,21 +340,38 @@ class HServeModel:
             elif "t5" in self.config.name:
                 self.model = T5PytorchPipeRandom(config)
             else:
-                raise ValueError("%s undefined random model name %s" % (self.key, self.config.name))
+                raise ValueError(
+                    "%s undefined random model name %s" % (self.key, self.config.name)
+                )
+            # print("asdgfadsgfad", flush=True)
         else:
             raise ValueError("%s unknown model type %s" % (self.key, self.config.type))
 
-        self.model.eval()
-        self.model.partition_by_parameter(self.config.ppos, self.config.stages)
-        # self.model.partition_by_parameter(self.config.ppos, 4) # TEST MULTIPLEX
-        self.model.convert(self.device)
+        # print("load model", type(self.model), flush=True)
 
-        del model
+        print(
+            "partition_by_parameter", self.config.ppos, self.config.stages, flush=True
+        )
+        self.model.partition_by_parameter(
+            self.config.ppos, self.config.stages, "random" == self.config.type
+        )
+
+        # print("load model aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", flush=True)
+        if "random" != self.config.type:
+            print("convert", flush=True)
+            self.model.convert(self.device)
+            del model
+        else:
+            print("convert_layer_specs", flush=True)
+            self.model.convert_layer_specs(self.device)
+        # self.model.partition_by_parameter(self.config.ppos, 4) # TEST MULTIPLEX
+
+        self.model.eval()
         gc.collect()
         torch.cuda.empty_cache()
 
     @torch.no_grad()
-    def model_inference(self, args, mask):
+    def model_inference(self, args, mask, uid):
         start_time = time.perf_counter()
         # self.logger.debug("%s args %s", self.key, args)
         if self.config.ppos == 0:
@@ -365,15 +384,15 @@ class HServeModel:
         end_time = time.perf_counter()
         if self.is_last_stage:
             outputs = outputs.squeeze(1) / self.config.temp
-            if "t5" == self.config.type:
+            if "t5" in self.config.name:
                 outputs = outputs[:, T5_TASK_LABELS]
-            if "gpt" == self.config.type:
+            if "gpt" in self.config.name:
                 outputs = outputs[:, -1, :50257]
             outputs = outputs.detach().cpu().numpy()
             # outputs = temperature_scale(outputs, self.config.temp)
 
         self.logger.info(
-            "%s inference %s (ms)", self.key, (end_time - start_time) * 1000,
+            "[%s] %s inference %s (ms)", uid, self.key, (end_time - start_time) * 1000,
         )
 
         return outputs
@@ -388,13 +407,20 @@ class HybridScheduler:
 
         self.config = options
 
-        self.logger = Logger(__file__, logging.INFO, 50000000, 5)
+        filename = (
+            __file__.split(".")[0]
+            + f"_{options.type}_{options.ens}_{ray._private.services.get_node_ip_address()}"
+        )
+
+        self.logger = Logger(filename, logging.INFO, 50000000, 5)
         self.logger.info("HybridScheduler logger initialized")
 
         # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(VISIBLE_GPUS)
         # self.logger.info("CUDA_VISIBLE_DEVICES: %s", os.environ["CUDA_VISIBLE_DEVICES"])
 
         self.logger.info("HybridScheduler cfg %s", options)
+
+        self.calibrators = {}
 
         self.ensembles = options.ensemble_options
         self.num_ensembles = len(options.ensemble_options)
@@ -410,53 +436,74 @@ class HybridScheduler:
         # idx = np.random.choice(list(range(len(keys))), 1)[0]
         # key = keys[idx]
         # parallel_options[key] += 1
-        self.logger.info("parallel_options %s", parallel_options)
+        self.logger.debug("parallel_options %s", parallel_options)
         num_replicas = len(parallel_options.replications)
         parallel_options.rr_counter += 1
         r = parallel_options.rr_counter % num_replicas
         key = parallel_options.replications[r]
-        self.logger.info("parallel_options %s", parallel_options)
+        self.logger.debug("parallel_options %s", parallel_options)
         return serve.get_deployment(key).get_handle(sync=False)
 
     async def __call__(self, request) -> Any:
         data = await request.json()
-        self.logger.info("data %s", data, ray.ObjectRef(bytes.fromhex(data['args'])))
-        args = ray.get(ray.ObjectRef(bytes.fromhex(data['args'])))
-        self.logger.info("args %s", args)
-        ref =  await self.ensemble_inference(args)
-        self.logger.info("ref %s", ref)
-        return {
-            "logits": ref.hex()
-        }
 
-    async def post_processing(self, ensemble_outputs, outputs, batch_mask, idx):
+        if self.config.type == "gpt" or self.config.type == "t5":
+            # args = (
+            #     np.load(io.BytesIO(data['input_ids']), allow_pickle=False),
+            #     np.load(io.BytesIO(data['attention_mask']), allow_pickle=False),
+            # )
+            args = (
+                np.asarray(data["input_ids"], dtype=np.int64),
+                np.asarray(data["attention_mask"], dtype=np.int64),
+            )
+
+        if self.config.type == "vit":
+            # args = (
+            #     np.load(io.BytesIO(data['pixel_values']), allow_pickle=False),
+            # )
+            args = (np.asarray(data["pixel_values"], dtype=np.float32),)
+
+        logits = await self.ensemble_inference(args)
+        # self.logger.debug("logits %s", logits)
+        return {"logits": logits.tolist()}
+
+        # self.logger.info("data %s", data, ray.ObjectRef(bytes.fromhex(data["args"])))
+        # args = ray.get(ray.ObjectRef(bytes.fromhex(data["args"])))
+        # self.logger.info("args %s", args)
+        # ref = await self.ensemble_inference(args)
+        # self.logger.info("ref %s", ref)
+        # return {"logits": ref.hex()}
+
+    async def post_processing(self, ensemble_outputs, outputs, batch_mask, idx, uid):
         local_mask = batch_mask[idx]
-        outputs = ray.get(outputs)
-        ensemble_outputs = self.model_ensemble(
-            ensemble_outputs, outputs, local_mask, idx
-        )
+        # outputs = ray.get(outputs)
+        # ensemble_outputs = self.model_ensemble(
+        #     ensemble_outputs, outputs, local_mask, idx
+        # )
+        name = self.config.ensemble_options[idx].name
+        ensemble_outputs = ray.get(outputs)
 
-        extended_mask, _ = self.offload_mask(
-            ensemble_outputs, local_mask, idx
+        extended_mask, max_prob = self.offload_mask(
+            ensemble_outputs, local_mask, idx, uid
         )
 
         num_next_models = self.num_ensembles - idx - 1
         if np.any(extended_mask) and num_next_models > 0:
-            batch_mask[idx] &= ~extended_mask
-            batch_mask[idx + 1] |= extended_mask
-            # batch_mask = self.update_batch_mask(
-            #     max_prob, batch_mask.copy(), extended_mask, idx
-            # )
-            # self.logger.trace(
-            #     "%s batch_mask updated %s", options.name, batch_mask
-            # )
+            # batch_mask[idx] &= ~extended_mask
+            # batch_mask[idx + 1] |= extended_mask
+            batch_mask = self.update_batch_mask(
+                max_prob, batch_mask.copy(), extended_mask, idx, uid
+            )
+            self.logger.debug("%s batch_mask updated %s", name, batch_mask)
 
-        return ensemble_outputs, np.any(extended_mask)
-    
+        return ensemble_outputs, batch_mask
 
     # This method can be called concurrently!
     async def ensemble_inference(self, args):
-        start_time = time.perf_counter()
+
+        uid = uuid.uuid4().hex
+
+        req_start_time = time.perf_counter()
 
         batch_size = len(args[0])
         ensemble_outputs = None
@@ -466,17 +513,35 @@ class HybridScheduler:
         batch_mask = batch_mask.astype(bool)
 
         for idx, options in enumerate(self.ensembles):
+            name = self.config.ensemble_options[idx].name
             outputs = args
             local_mask = batch_mask[idx]
-            self.logger.trace("%s local_mask %s", options.name, local_mask)
+            self.logger.debug("%s local_mask %s", options.name, local_mask)
 
             if np.any(local_mask):
                 for parallel_options in options.parallel_options:
                     handle = self.schedule_handle(parallel_options)
-                    outputs = await handle.model_inference.remote(outputs, local_mask)
+                    # start_time = time.perf_counter()
+                    outputs = await handle.model_inference.remote(outputs, local_mask, uid)
+                    # end_time = time.perf_counter()
+                    # self.logger.info(
+                    #     "[%s] %s (%s) inference (%s, %s) %s (ms)",
+                    #     uid,
+                    #     name,
+                    #     parallel_options.ppos,
+                    #     start_time,
+                    #     end_time,
+                    #     (end_time - start_time) * 1000,
+                    # )
 
-                ensemble_outputs, process_next = await self.post_processing(ensemble_outputs, outputs, batch_mask, idx)
-                if not process_next: break
+                ensemble_outputs, batch_mask = await self.post_processing(
+                    ensemble_outputs, outputs, batch_mask, idx, uid
+                )
+                if (idx + 1) < self.num_ensembles and np.sum(
+                    batch_mask[(idx + 1) :]
+                ) == 0:
+                    self.logger.debug("%s early exit %s", name, batch_mask)
+                    break
 
                 # outputs = ray.get(outputs)
                 # ensemble_outputs = self.model_ensemble(
@@ -489,7 +554,7 @@ class HybridScheduler:
 
                 # if np.all(~extended_mask): break
 
-                # self.logger.trace(
+                # self.logger.debug(
                 #     "%s local_mask updated %s", options.name, extended_mask
                 # )
                 # num_next_models = self.num_ensembles - idx - 1
@@ -499,23 +564,31 @@ class HybridScheduler:
                 #     # batch_mask = self.update_batch_mask(
                 #     #     max_prob, batch_mask.copy(), extended_mask, idx
                 #     # )
-                #     # self.logger.trace(
+                #     # self.logger.debug(
                 #     #     "%s batch_mask updated %s", options.name, batch_mask
                 #     # )
             assert np.sum(batch_mask) == batch_size
 
-        end_time = time.perf_counter()
+        req_end_time = time.perf_counter()
         self.logger.info(
-            "request %s (ms)", (end_time - start_time) * 1000,
+            "[%s] request %s (ms)", uid, (req_end_time - req_start_time) * 1000,
         )
         gc.collect()
         torch.cuda.empty_cache()
         return ensemble_outputs
 
-    def offload_mask(self, logits, mask, idx):
+    def offload_mask(self, logits, mask, idx, uid):
         start_time = time.perf_counter()
         probabilities = np.power(softmax(logits, axis=1), 2)
-        max_prob = np.max(probabilities, axis=1)
+
+        name = self.config.ensemble_options[idx].name
+        if name not in self.calibrators:
+            with open(
+                f"/home/xly/model-inference/inference_dump/{name}_calibrator", "rb",
+            ) as f:
+                self.calibrators[name] = dill.load(f)
+
+        max_prob = self.calibrators[name].calibrate(probabilities)
         if "bert" == self.config.type:
             if max_prob.shape[1] == 1:
                 max_prob = max_prob.squeeze(1)
@@ -528,8 +601,9 @@ class HybridScheduler:
         self.logger.debug("max_prob %s, combined_mask %s", max_prob, combined_mask)
         end_time = time.perf_counter()
         self.logger.info(
-            "%s offload_mask time elapsed (%s, %s) %s (ms)",
-            self.config.ensemble_options[idx].name,
+            "[%s] %s offload_mask time elapsed (%s, %s) %s (ms)",
+            uid,
+            name,
             start_time,
             end_time,
             (end_time - start_time) * 1000,
@@ -540,7 +614,7 @@ class HybridScheduler:
     #     probabilities = np.power(m(logits), 2)
     #     max_prob = np.max(probabilities, axis=-1)
     #     prob_mask = max_prob < self.ensembles[idx].threshold
-    #     self.logger.trace(
+    #     self.logger.debug(
     #         "%s (offload_mask) prob_mask %s %s",
     #         self.ensembles[idx].name,
     #         prob_mask,
@@ -548,27 +622,27 @@ class HybridScheduler:
     #     )
     #     extended_mask = mask & prob_mask
     #     # combined_mask[mask] &= prob_mask[mask]
-    #     self.logger.trace("max_prob %s, extended_mask %s", max_prob, extended_mask)
+    #     self.logger.debug("max_prob %s, extended_mask %s", max_prob, extended_mask)
     #     return extended_mask, max_prob
 
-    def model_ensemble(self, hist_outputs, outputs, mask, idx):
-        start_time = time.perf_counter()
-        if hist_outputs is not None:
-            hist_outputs[mask] = (
-                hist_outputs[mask] * (1 - self.config.alpha)
-                + outputs * self.config.alpha
-            )
-        else:
-            hist_outputs = outputs.copy()
-        end_time = time.perf_counter()
-        self.logger.info(
-            "%s model_ensemble time elapsed (%s, %s) %s (ms)",
-            self.config.ensemble_options[idx].name,
-            start_time,
-            end_time,
-            (end_time - start_time) * 1000,
-        )
-        return hist_outputs  # MEMCOPY MUTABLE
+    # def model_ensemble(self, hist_outputs, outputs, mask, idx):
+    #     start_time = time.perf_counter()
+    #     if hist_outputs is not None:
+    #         hist_outputs[mask] = (
+    #             hist_outputs[mask] * (1 - self.config.alpha)
+    #             + outputs * self.config.alpha
+    #         )
+    #     else:
+    #         hist_outputs = outputs.copy()
+    #     end_time = time.perf_counter()
+    #     self.logger.info(
+    #         "%s model_ensemble time elapsed (%s, %s) %s (ms)",
+    #         self.config.ensemble_options[idx].name,
+    #         start_time,
+    #         end_time,
+    #         (end_time - start_time) * 1000,
+    #     )
+    #     return hist_outputs  # MEMCOPY MUTABLE
 
     # def model_ensemble(self, ensemble_outputs, local_outputs, mask, idx):
     #     # start_time = time.perf_counter()
@@ -578,7 +652,7 @@ class HybridScheduler:
     #             ensemble_outputs[mask] * (1 - ensemble_weight)
     #             + local_outputs * ensemble_weight
     #         )
-    #     self.logger.trace(
+    #     self.logger.debug(
     #         "%s ensemble_outputs %s", self.ensembles[idx].name, ensemble_outputs,
     #     )
     #     return (
@@ -601,7 +675,7 @@ class HybridScheduler:
     #                 & (max_prob < skip_th_upper)
     #                 & local_mask
     #             )
-    #             self.logger.trace(
+    #             self.logger.debug(
     #                 "%s skip_th_lower %s, skip_th_upper %s, skip_mask %s",
     #                 self.ensembles[idx].name,
     #                 skip_th_lower,
@@ -615,13 +689,13 @@ class HybridScheduler:
     #     mask[idx] &= ~local_mask
     #     return mask
 
-    def update_batch_mask(self, max_prob, mask, local_mask, idx):
+    def update_batch_mask(self, max_prob, mask, local_mask, idx, uid):
         start_time = time.perf_counter()
         num_next_models = len(mask) - self.config.ensemble_options[idx].epos - 1
-        base_step = (self.config.ensemble_options[idx].th - 0.25) / num_next_models
+        base_step = (self.config.ensemble_options[idx].th) / num_next_models
         for skip in range(num_next_models):
-            skip_th_lower = base_step * (num_next_models - 1 - skip) + 0.25
-            skip_th_upper = base_step * (num_next_models - skip) + 0.25
+            skip_th_lower = base_step * (num_next_models - 1 - skip)
+            skip_th_upper = base_step * (num_next_models - skip)
             skip_mask = (
                 (max_prob >= skip_th_lower) & (max_prob < skip_th_upper) & local_mask
             )
@@ -636,10 +710,11 @@ class HybridScheduler:
         mask[self.config.ensemble_options[idx].epos] &= ~local_mask
         end_time = time.perf_counter()
         self.logger.info(
-            "%s update_batch_mask time elapsed (%s,%s) %s (ms)",
+            "[%s] %s update_batch_mask time elapsed (%s,%s) %s (ms)",
+            uid,
+            self.config.ensemble_options[idx].name,
             start_time,
             end_time,
-            self.config.ensemble_options[idx].name,
             (end_time - start_time) * 1000,
         )
         return mask
@@ -676,7 +751,5 @@ for host, h_op in host_options.items():
 
 
 HybridScheduler.options(
-    name="hybrid-scheduler",
-    num_replicas=20,
-    ray_actor_options={"num_cpus": 2},
+    name="hybrid-scheduler", num_replicas=20, ray_actor_options={"num_cpus": 2},
 ).deploy(system_options)

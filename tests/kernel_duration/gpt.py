@@ -34,8 +34,8 @@ parser = HfArgumentParser(Arguments)
 args = parser.parse_args_into_dataclasses()[0]
 basename = os.path.basename(args.model_name_or_path)
 
-logger.info("=================================")
-logger.info("%s", args)
+# logger.info("=================================")
+# logger.info("%s", args)
 
 tokenizer = GPT2Tokenizer.from_pretrained(args.model_name_or_path)
 
@@ -82,7 +82,9 @@ records_end = []
 for step, batch in enumerate(tqdm(load_encodings(encodings), desc=f"{args.batch_size}")):
     input_ids = batch[0].to(device)
     start_time = time.perf_counter()
-    model((input_ids, None))
+    outputs = model((input_ids, None))
+    print(None, outputs[1].shape)
+    exit()
     torch.cuda.empty_cache()
     end_time = time.perf_counter()
     if step > 10:

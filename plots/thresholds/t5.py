@@ -20,15 +20,17 @@ import pandas as pd
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
+from datasets import concatenate_datasets
 
 from hfutils.logger import Logger
 from hfutils.pipe.t5 import T5PyTorchPipe
-from hfutils.loader import load_glue_val, t5_preprocess_function
+from hfutils.loader import load_glue_val, load_glue_train, t5_preprocess_function
 from hfutils.measure import get_energy_by_group, get_gpu_uuid
 from hfutils.constants import TASK_TO_LABELS, token2label
 from hfutils.calibration import temperature_scale
 
 import sys
+
 sys.path.append(".")
 from plots.thresholds.utils import *
 
@@ -63,7 +65,6 @@ model_paths = [
     # f"{base_dir}/t5-large-lm-adapt/all/checkpoint-1500",
     f"{base_dir}/t5-xl-lm-adapt/all/checkpoint-1500",
 ]
-
 
 model_paths = dict(zip(model_keys, model_paths))
 model_names = dict(zip(model_keys, model_names))
@@ -103,9 +104,10 @@ preprocess_function = partial(
 )
 
 data_collator = DataCollatorForSeq2Seq(tokenizer)
-dataset = load_glue_val(preprocess_function).shuffle()
-# dataset = dataset.select(range(int(len(dataset) / 2)))
-dataset = dataset.select(range(2000))
+dataset = concatenate_datasets(
+    [load_glue_val(preprocess_function), load_glue_train(preprocess_function)]
+).shuffle()
+dataset = dataset.select(range(10000))
 
 dataloader = DataLoader(
     dataset, shuffle=False, collate_fn=data_collator, batch_size=32, drop_last=True,
@@ -122,12 +124,15 @@ model_outputs = dict(zip(model_keys, [list() for _ in range(n_models)]))
 
 m = torch.nn.Softmax(dim=-1)
 
+from hfutils.calibration import agg_logits
+
 num_labels = 0
 labels = []
 for batch in tqdm(dataloader, desc="Collect Train Data"):
     label = torch.Tensor(token2label(batch["labels"][:, 0], label_tokens))
     num_labels += len(label)
 
+    # hist_logits = None
     for i, key in enumerate(model_keys):
         logits = model_inference(
             models[key],
@@ -135,11 +140,12 @@ for batch in tqdm(dataloader, desc="Collect Train Data"):
             device=model_device[key],
             temperature=model_meta[model_names[key]]["temperature"],
         )
+        # logits = agg_logits(hist_logits, logits, 0.6)
         model_outputs[key].append(logits)
     labels.append(label)
 
 model_probs, model_ans, model_outputs, labels = postprocessing_inference(
-    model_keys, model_outputs, labels, m, alpha=0.6
+    model_keys, model_outputs, labels, m, alpha=1.0
 )
 
 all_thresholds = list(
@@ -157,5 +163,5 @@ profile_thresholds(
     model_latency,
     model_names,
     all_thresholds,
-    "t5-3",
+    "t5",
 )

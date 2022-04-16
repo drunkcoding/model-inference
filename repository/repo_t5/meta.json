@@ -10,7 +10,7 @@
         ]
     },
     "t5-base-lm-adapt": {
-        "threshold": 0.85469571,
+        "threshold": 0.91,
         "temperature": 2.1796,
         "parallel_stages": 1,
         "path": "t5-base-lm-adapt/all/checkpoint-2000",
@@ -20,7 +20,7 @@
         ]
     },
     "t5-large-lm-adapt": {
-        "threshold": 0.85508568,
+        "threshold": 0.5757575757575758,
         "temperature": 2.1116,
         "parallel_stages": 1,
         "path": "t5-large-lm-adapt/all/checkpoint-1500",
@@ -41,12 +41,10 @@
     },
     "t5_ensemble": {
         "ensembles": [
-            "t5-small-lm-adapt",
             "t5-base-lm-adapt",
-            "t5-large-lm-adapt",
             "t5-xl-lm-adapt"
         ],
-        "alpha": 0.6
+        "alpha": 1.0
     },
     "base_dir": "/home/xly/model-finetune/outputs/google"
 }

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 
-font = {"size": 96}
+font = {"size": 48}
 matplotlib.rc("font", **font)
 sns.set(palette="colorblind", style='white')
 
@@ -36,10 +36,10 @@ plt.plot(steps, x_t / 1000, label="Inference", color='b', linewidth=12, linestyl
 # plt.plot(steps, x_dt / 1000, label="Optimal", color='black', linewidth=12, linestyle='--')
 plt.axhline(y=BERT_BASE_TRAIN_CARBON_KG, color='r', linestyle='-.', linewidth=12, label="Train")
 
-plt.xticks(fontsize=96)
-plt.yticks(fontsize=96)
-plt.xlabel("Time Elapsed (hours)", fontsize=96)
-plt.ylabel(r"CO2e (ton)", fontsize=96)
+plt.xticks(fontsize=48)
+plt.yticks(fontsize=48)
+plt.xlabel("Time Elapsed (hours)", fontsize=48)
+plt.ylabel(r"CO2e (ton)", fontsize=48)
 plt.xscale("log")
 # plt.yscale("log")
 plt.grid()

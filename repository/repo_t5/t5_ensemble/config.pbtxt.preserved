@@ -24,38 +24,102 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-name: "confidence"
-backend: "python"
+name: "t5_ensemble"
+platform: "ensemble"
 
 input [
   {
-    name: "logits"
-    data_type: TYPE_FP32
-    dims: [ -1, 2 ]
+    name: "encoder_input_ids"
+    data_type: TYPE_INT64
+    dims: [ -1, 128 ]
+  },
+  {
+    name: "encoder_attention_mask"
+    data_type: TYPE_INT64
+    dims: [ -1, 128 ]
   },
   {
     name: "batch_mask"
     data_type: TYPE_BOOL
-    dims: [ -1, 4 ]
+    dims: [ 4, -1 ]
   },
   {
-    name: "local_mask"
-    data_type: TYPE_BOOL
-    dims: [ 4 ]
+    name: "logits"
+    data_type: TYPE_FP32
+    dims: [ -1, 3 ]
   }
 ]
 
 output [
   {
+    name: "logits"
+    data_type: TYPE_FP32
+    dims: [ -1, 3 ]
+  },
+  {
     name: "batch_mask"
     data_type: TYPE_BOOL
-    dims: [ -1, 4 ]
+    dims: [ 4, -1 ]
   }
 ]
 
-instance_group [
-  {
-    count: 4
-    kind: KIND_CPU
-  }
-]
+ensemble_scheduling {
+  step [ 
+    {
+      model_name: "t5_e0p0"
+      model_version: -1
+      input_map {
+        key: "encoder_input_ids"
+        value: "encoder_input_ids"
+      }
+      input_map {
+        key: "encoder_attention_mask"
+        value: "encoder_attention_mask"
+      }
+      input_map {
+        key: "batch_mask"
+        value: "batch_mask"
+      }
+      input_map {
+        key: "logits"
+        value: "logits"
+      }
+      output_map {
+        key: "logits"
+        value: "logits_0"
+      }
+      output_map {
+        key: "batch_mask"
+        value: "batch_mask_0"
+      }
+    },
+    {
+      model_name: "t5_e1p0"
+      model_version: -1
+      input_map {
+        key: "logits"
+        value: "logits_0"
+      }
+      input_map {
+        key: "encoder_input_ids"
+        value: "encoder_input_ids"
+      }
+      input_map {
+        key: "encoder_attention_mask"
+        value: "encoder_attention_mask"
+      }
+      input_map {
+        key: "batch_mask"
+        value: "batch_mask_0"
+      }
+      output_map {
+        key: "logits"
+        value: "logits"
+      }
+      output_map {
+        key: "batch_mask"
+        value: "batch_mask"
+      }
+    }
+  ]
+}
