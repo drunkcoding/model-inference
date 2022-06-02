@@ -1,0 +1,65 @@
+{
+    "vit-tiny-patch16-224": {
+        "threshold": 0.7070707070707072,
+        "temperature": 1.0134,
+        "parallel_stages": 1,
+        "type": "vit",
+        "path": "WinKawaks/vit-tiny-patch16-224",
+        "util_params": [
+            28.77052136941151,
+            -22.05592437878701
+        ]
+    },
+    "vit-small-patch16-224": {
+        "threshold": 0.0,
+        "temperature": 1.0016,
+        "type": "vit",
+        "parallel_stages": 1,
+        "path": "WinKawaks/vit-small-patch16-224",
+        "util_params": [
+            10.112434734935427,
+            -4.420536354426504
+        ]
+    },
+    "vit-base-patch16-224": {
+        "threshold": 0.33333333333333337,
+        "temperature": 1.0544,
+        "parallel_stages": 1,
+        "type": "vit",
+        "path": "google/vit-base-patch16-224",
+        "util_params": [
+            1.7293167268661003,
+            2.1360236593259434
+        ]
+    },
+    "vit-large-patch16-224": {
+        "threshold": 0.0,
+        "temperature": 1.0845,
+        "parallel_stages": 6,
+        "type": "random",
+        "path": "vit-20B",
+        "util_params": [
+            -0.11003595134530754,
+            3.7493682150167214
+        ]
+    },
+    "ensembles": [
+        "vit-tiny-patch16-224",
+        "vit-small-patch16-224"
+    ],
+    "instance": [{
+        "host": "172.31.35.95",
+        "placement": {
+            "0": [{
+                "name": "vit-small-patch16-224",
+                "stage": 0
+            }, {
+                "name": "vit-tiny-patch16-224",
+                "stage": 0
+            }]
+        }
+    }],
+    "type": "vit",
+    "alpha": 1.0,
+    "base_dir": "/data/HuggingFace"
+}

@@ -1,0 +1,153 @@
+{
+
+    "t5-small-lm-adapt": {
+        "threshold": 0.65650492,
+        "temperature": 1.7848,
+        "parallel_stages": 1,
+        "type": "t5",
+        "path": "finetune/google/t5-small-lm-adapt/all/checkpoint-4500",
+        "util_params": [
+            21.564945500310746,
+            -15.138317641909849
+        ]
+    },
+    "t5-base-lm-adapt": {
+        "threshold": 0.8282828282828284,
+        "temperature": 2.1796,
+        "parallel_stages": 1,
+        "type": "t5",
+        "path": "finetune/google/t5-base-lm-adapt/all/checkpoint-2000",
+        "util_params": [
+            4.205570303169466,
+            55.4712557556144
+        ]
+    },
+    "t5-large-lm-adapt": {
+        "threshold": 0.7272727272727273,
+        "temperature": 2.1116,
+        "parallel_stages": 1,
+        "type": "t5",
+        "path": "finetune/google/t5-large-lm-adapt/all/checkpoint-1500",
+        "util_params": [
+            0.9813083031654353,
+            39.150095829514946
+        ]
+    },
+    "t5-xl-lm-adapt": {
+        "threshold": 0.0,
+        "temperature": 2.3932,
+        "parallel_stages": 8,
+        "type": "random",
+        "path": "t5-20B",
+        "util_params": [
+            0.04642164991546499,
+            2.402200418179127
+        ]
+    },
+    "ensembles": [
+        "t5-base-lm-adapt",
+        "t5-large-lm-adapt",
+        "t5-xl-lm-adapt"
+    ],
+    "instance": [{
+        "host": "172.31.35.95",
+        "placement": {
+            "0": [{
+                "name": "t5-xl-lm-adapt",
+                "stage": 0
+            }]
+        }
+    }, {
+        "host": "172.31.39.160",
+        "placement": {
+            "0": [{
+                "name": "t5-xl-lm-adapt",
+                "stage": 1
+            }]
+        }
+    }, {
+        "host": "172.31.47.240",
+        "placement": {
+            "0": [{
+                "name": "t5-xl-lm-adapt",
+                "stage": 2
+            }]
+        }
+    }, {
+        "host": "172.31.32.224",
+        "placement": {
+            "0": [{
+                "name": "t5-xl-lm-adapt",
+                "stage": 3
+            }]
+        }
+    }, {
+        "host": "172.31.44.101",
+        "placement": {
+            "0": [{
+                "name": "t5-xl-lm-adapt",
+                "stage": 4
+            }]
+        }
+    }, {
+        "host": "172.31.36.213",
+        "placement": {
+            "0": [{
+                "name": "t5-xl-lm-adapt",
+                "stage": 5
+            }]
+        }
+    }, {
+        "host": "172.31.34.158",
+        "placement": {
+            "0": [{
+                "name": "t5-xl-lm-adapt",
+                "stage": 6
+            }]
+        }
+    }, {
+        "host": "172.31.40.86",
+        "placement": {
+            "0": [{
+                "name": "t5-xl-lm-adapt",
+                "stage": 7
+            }]
+        }
+    }, {
+        "host": "172.31.43.33",
+        "placement": {
+            "0": [{
+                "name": "t5-large-lm-adapt",
+                "stage": 0
+            },{
+                "name": "t5-base-lm-adapt",
+                "stage": 0
+            }]
+        }
+    }, {
+        "host": "172.31.39.35",
+        "placement": {
+            "0": [{
+                "name": "t5-large-lm-adapt",
+                "stage": 0
+            },{
+                "name": "t5-base-lm-adapt",
+                "stage": 0
+            }]
+        }
+    }, {
+        "host": "172.31.43.93",
+        "placement": {
+            "0": [{
+                "name": "t5-large-lm-adapt",
+                "stage": 0
+            },{
+                "name": "t5-base-lm-adapt",
+                "stage": 0
+            }]
+        }
+    }],
+    "type": "t5",
+    "alpha": 1.0,
+    "base_dir": "/data/HuggingFace"
+}

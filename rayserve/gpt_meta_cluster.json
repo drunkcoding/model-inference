@@ -1,0 +1,174 @@
+{
+    "distilgpt2": {
+        "threshold": 0.83780015,
+        "temperature": 1.0,
+        "parallel_stages": 1,
+        "path": "distilgpt2",
+        "type": "gpt",
+        "util_params": [
+            60.95263761936985,
+            -59.16241687555691
+        ]
+    },
+    "gpt2": {
+        "threshold": 0.5151515151515152,
+        "temperature": 1.0,
+        "parallel_stages": 1,
+        "path": "gpt2",
+        "type": "gpt",
+        "util_params": [
+            31.532767200075796,
+            -30.373122701525613
+        ]
+    },
+    "gpt2-medium": {
+        "threshold": 0.a,
+        "temperature": 1.0,
+        "parallel_stages": 1,
+        "path": "gpt2-medium",
+        "type": "gpt",
+        "util_params": [
+            3.6098631624633475,
+            -3.2726723600524115
+        ]
+    },
+    "gpt2-large": {
+        "threshold": 0.37373737373737376,
+        "temperature": 1.0,
+        "parallel_stages": 1,
+        "path": "gpt2-large",
+        "type": "gpt",
+        "util_params": [
+            1.2456099029787424,
+            -1.09812655484982
+        ]
+    },
+    "gpt2-xl": {
+        "threshold": 0.31,
+        "temperature": 1.0,
+        "parallel_stages": 1,
+        "path": "gpt2-xl",
+        "type": "gpt",
+        "util_params": [
+            1.427390120193421,
+            -1.145347008781714
+        ]
+    },
+    "gpt-j-6B": {
+        "threshold": 0.0,
+        "temperature": 1.0,
+        "parallel_stages": 8,
+        "type": "random",
+        "path": "gpt-20B",
+        "util_params": [
+            35.44965035911833,
+            -34.14066301115041
+        ]
+    },
+    "ensembles": [
+        "gpt2-medium",
+        "gpt2-large",
+        "gpt-j-6B"
+    ],
+    "instance": [{
+        "host": "172.31.35.95",
+        "placement": {
+            "0": [{
+                "name": "gpt-j-6B",
+                "stage": 0
+            }]
+        }
+    }, {
+        "host": "172.31.39.160",
+        "placement": {
+            "0": [{
+                "name": "gpt-j-6B",
+                "stage": 1
+            }]
+        }
+    }, {
+        "host": "172.31.47.240",
+        "placement": {
+            "0": [{
+                "name": "gpt-j-6B",
+                "stage": 2
+            }]
+        }
+    }, {
+        "host": "172.31.32.224",
+        "placement": {
+            "0": [{
+                "name": "gpt-j-6B",
+                "stage": 3
+            }]
+        }
+    }, {
+        "host": "172.31.44.101",
+        "placement": {
+            "0": [{
+                "name": "gpt-j-6B",
+                "stage": 4
+            }]
+        }
+    }, {
+        "host": "172.31.36.213",
+        "placement": {
+            "0": [{
+                "name": "gpt-j-6B",
+                "stage": 5
+            }]
+        }
+    }, {
+        "host": "172.31.34.158",
+        "placement": {
+            "0": [{
+                "name": "gpt-j-6B",
+                "stage": 6
+            }]
+        }
+    }, {
+        "host": "172.31.40.86",
+        "placement": {
+            "0": [{
+                "name": "gpt-j-6B",
+                "stage": 7
+            }]
+        }
+    }, {
+        "host": "172.31.43.33",
+        "placement": {
+            "0": [{
+                "name": "gpt2-large",
+                "stage": 0
+            }, {
+                "name": "gpt2-medium",
+                "stage": 0
+            }]
+        }
+    }, {
+        "host": "172.31.39.35",
+        "placement": {
+            "0": [{
+                "name": "gpt2-large",
+                "stage": 0
+            }, {
+                "name": "gpt2-medium",
+                "stage": 0
+            }]
+        }
+    }, {
+        "host": "172.31.43.93",
+        "placement": {
+            "0": [{
+                "name": "gpt2-large",
+                "stage": 0
+            }, {
+                "name": "gpt2-medium",
+                "stage": 0
+            }]
+        }
+    }],
+    "type": "gpt",
+    "alpha": 1.0,
+    "base_dir": "/data/HuggingFace"
+}
