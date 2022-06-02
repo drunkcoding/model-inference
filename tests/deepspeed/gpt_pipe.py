@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+import numpy as np
 import torch
 import deepspeed
 from deepspeed.utils import RepeatingLoader
@@ -10,6 +11,7 @@ from tqdm import tqdm
 import requests
 import re
 
+from torch.utils.data import DataLoader, Subset, Dataset
 from transformers import AutoConfig, HfArgumentParser
 from transformers import GPT2Tokenizer, AutoModelWithLMHead
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
@@ -25,6 +27,29 @@ from tests.deepspeed.utils import execute_model
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["TORCH_EXTENSIONS_DIR"] = "."
 
+class TextDataset(Dataset):
+    """Face Landmarks dataset."""
+
+    def __init__(self, iter):
+        """
+        Args:
+            csv_file (string): Path to the csv file with annotations.
+            root_dir (string): Directory with all the images.
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        self.data = list(iter)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = {
+            "input_ids": self.data[idx][0],
+            "attention_mask": torch.ones_like(self.data[idx][0]).to(torch.long),
+            "labels": self.data[idx][1],
+        }
+        return sample
 
 @dataclass
 class Arguments:
@@ -67,10 +92,10 @@ encodings = tokenizer("\n\n".join(val_dataset["text"]), return_tensors="pt")
 encodings.input_ids = encodings.input_ids.to(torch.long)
 # print(encodings.input_ids.shape)
 
-def load_encodings(encodings):
-    max_length = 512
-    stride = 128
+max_length = 512
+stride = 128
 
+def load_encodings(encodings):
     for i in tqdm(range(0, encodings.input_ids.size(1), stride)):
         begin_loc = max(i + stride - max_length, 0)
         end_loc = min(i + stride, encodings.input_ids.size(1))
@@ -83,7 +108,18 @@ def load_encodings(encodings):
         if input_ids.size(1) != max_length:
             continue
 
-        yield input_ids.repeat(args.batch_size, 1), target_ids, trg_len, end_loc
+        yield input_ids, encodings.input_ids[:, end_loc]
+dataset = TextDataset(load_encodings(encodings))
+
+rnd_seed = 106033
+np.random.seed(rnd_seed)
+
+index = np.array([x for x in range(len(dataset))])
+np.random.shuffle(index)
+dataset = Subset(dataset, index)
+dataloader = DataLoader(
+    dataset, shuffle=False, num_workers=2, batch_size=args.batch_size
+)
 
 deepspeed.init_distributed()
 
@@ -106,15 +142,15 @@ deepspeed.init_distributed()
 
 #     return outputs
 
-model = GPTDeepSpeedPipe(config, num_stages=world_size if not args.inference else int( world_size / 2) )
+model = GPTDeepSpeedPipe(config, num_stages=world_size if not args.inference else 8)
 engine, _, _, _ = deepspeed.initialize(config=args.deepspeed_config, model=model)
 
 def model_inference(batch):
-    shape = batch["pixel_values"].shape
-    input_args = (batch["pixel_values"],)
+    shape = batch["input_ids"].shape
+    input_args = (batch["input_ids"],batch["attention_mask"])
     inputs = (input_args, torch.zeros(shape[0]))
     
     outputs = engine.eval_batch(iter([inputs] * 1), compute_loss=False)
     return outputs
 
-execute_model(RepeatingLoader(load_encodings(encodings)), model_inference, f"gpt-bsz{args.batch_size}-{args.inference}")
+execute_model(RepeatingLoader(dataloader), model_inference, f"gpt-bsz{args.batch_size}-{args.inference}")

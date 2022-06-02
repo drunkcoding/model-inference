@@ -20,9 +20,9 @@ for WORKER in "${WORKERS[@]}"; do
     rsync -ahrv ubuntu@${WORKER}:~/model-inference ${HOME}/. 
     # rsync -ahrv ${HOME}/model-finetune ubuntu@${WORKER}:~/.
     # rsync -ahrv ${HOME}/huggingface-utils ubuntu@${WORKER}:~/.
-    rsync -ahr /data/HuggingFace ubuntu@${WORKER}:/data/.
-    rsync -ahr /data/ImageNet ubuntu@${WORKER}:/data/.
-    rsync -ahr ${HOME}/.cache ubuntu@${WORKER}:~/.
+    rsync -ahrv /data/HuggingFace ubuntu@${WORKER}:/data/.
+    # rsync -ahrv /data/ImageNet ubuntu@${WORKER}:/data/.
+    # rsync -ahrv ${HOME}/.cache ubuntu@${WORKER}:~/.
     # rsync -ahr ${HOME}/model-inference/scripts ubuntu@${WORKER}:~/model-inference/.
 done
 

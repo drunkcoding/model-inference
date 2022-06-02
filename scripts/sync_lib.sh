@@ -13,15 +13,22 @@ WORKERS=( "172.31.35.95" \
 )
 
 
-# for WORKER in "${WORKERS[@]}"; do
-#     rsync -ahr ~/huggingface-utils ubuntu@${WORKER}:~/.
-#     # rsync -ahr ~/huggingface-utils ubuntu@${WORKER}:~/.
-#     # ssh -t ${WORKER} "/home/ubuntu/miniconda3/envs/torch/bin/python -m pip install tensorboard"
-#     # # ssh -t ${WORKER} "cd /home/ubuntu/huggingface-utils/ && bash setup.sh"
-# done
+PYPATH="/home/ubuntu/miniconda3/envs/torch/bin/python"
+
+for WORKER in "${WORKERS[@]}"; do
+    rsync -ahr ~/huggingface-utils ubuntu@${WORKER}:~/.
+    # rsync -ahr ~/huggingface-utils ubuntu@${WORKER}:~/.
+    # ssh ${WORKER} "${PYPATH} -m pip install tensorboard"
+    # ssh ${WORKER} "cd /home/ubuntu/huggingface-utils/ && ${PYPATH} -m build && ${PYPATH} -m pip install dist/*.tar.gz"
+done
 
 HOSTS=$(IFS=, ; echo "${WORKERS[*]}")
 
+PDSH_RCMD_TYPE=ssh pdsh -w ${HOSTS} "cd /home/ubuntu/huggingface-utils/ && ${PYPATH} -m build && ${PYPATH} -m pip install dist/*.tar.gz"
+
 # pdsh -w ${HOSTS} "cd /home/ubuntu/huggingface-utils/ && git pull && bash setup.sh"
 
-PDSH_RCMD_TYPE=ssh pdsh -w ${HOSTS} "sudo apt update && sudo apt --fix-broken install -y"
+
+# PDSH_RCMD_TYPE=ssh pdsh -w ${HOSTS} "sudo apt update && sudo apt --fix-broken install -y"
+# PDSH_RCMD_TYPE=ssh pdsh -w ${HOSTS} "${PYPATH} -m pip install pynvml"
+# PDSH_RCMD_TYPE=ssh pdsh -w ${HOSTS} "${PYPATH} -m pip install uncertainty-calibration"

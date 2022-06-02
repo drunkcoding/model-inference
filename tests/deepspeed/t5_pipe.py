@@ -104,8 +104,8 @@ model = T5DeepSpeedPipe(config, num_stages=world_size if not args.inference else
 engine, _, _, _ = deepspeed.initialize(config=args.deepspeed_config, model=model)
 
 def model_inference(batch):
-    shape = batch["pixel_values"].shape
-    input_args = (batch["pixel_values"],)
+    shape = batch["input_ids"].shape
+    input_args = (batch["input_ids"],batch["attention_mask"])
     inputs = (input_args, torch.zeros(shape[0]))
     
     outputs = engine.eval_batch(iter([inputs] * 1), compute_loss=False)

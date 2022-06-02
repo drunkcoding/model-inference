@@ -31,6 +31,9 @@ with open(os.path.join(basedir, f"{args.type}.json"), "r") as fp:
     best_data = json.load(fp)
 
 df = pd.read_csv(os.path.join(basedir, f"{args.type}.csv"))
+max_cost = df['cost'].max()
+df['cost'] = df['cost'] / df['cost'].max()
+
 
 group_latency = df.groupby("accuracy", as_index=False)["cost"]
 latency_mean = group_latency.mean()
@@ -59,13 +62,13 @@ latency_min = pd.DataFrame({"accuracy": acc, "cost": cost})
 fig = plt.figure(figsize=(20, 10))
 ax = fig.add_subplot(111)
 
-# plt.fill_between(
-#     latency_mean["accuracy"],
-#     latency_min["cost"],
-#     latency_max["cost"],
-#     color="b",
-#     alpha=0.3,
-# )
+plt.fill_between(
+    latency_mean["accuracy"],
+    latency_min["cost"],
+    latency_max["cost"],
+    color="b",
+    alpha=0.3,
+)
 plt.plot(
     latency_min["accuracy"],
     latency_min["cost"],
@@ -83,8 +86,8 @@ plt.plot(
 first_acc = best_data[hybrid[-1]]["accuracy"]
 second_acc = best_data[hybrid[-2]]["accuracy"]
 
-first_cost = best_data[hybrid[-1]]["cost"]
-second_cost = best_data[hybrid[-2]]["cost"]
+first_cost = best_data[hybrid[-1]]["cost"] / max_cost
+second_cost = best_data[hybrid[-2]]["cost"] / max_cost
 
 rect = patches.Rectangle(
     (second_acc, 0),

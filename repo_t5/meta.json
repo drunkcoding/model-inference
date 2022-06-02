@@ -1,0 +1,35 @@
+{
+    "t5-small-lm-adapt_all": {
+        "threshold": 0.65650492,
+        "temperature": 1.7848,
+        "parallel_stages": 1,
+        "path": "t5-small-lm-adapt/all/checkpoint-4500"
+    },
+    "t5-base-lm-adapt_all": {
+        "threshold": 0.85469571,
+        "temperature": 2.1796,
+        "parallel_stages": 1,
+        "path": "t5-base-lm-adapt/all/checkpoint-2000"
+    },
+    "t5-large-lm-adapt_all": {
+        "threshold": 0.85508568,
+        "temperature": 2.1116,
+        "parallel_stages": 1,
+        "path": "t5-large-lm-adapt/all/checkpoint-1500"
+    },
+    "t5-xl-lm-adapt_all": {
+        "threshold": 0.0,
+        "temperature": 2.3932,
+        "parallel_stages": 1,
+        "path": "t5-xl-lm-adapt/all/checkpoint-1500"
+    },
+    "t5_ensemble": {
+        "ensembles": [
+            "t5-small-lm-adapt_all",
+            "t5-base-lm-adapt_all",
+            "t5-large-lm-adapt_all",
+            "t5-xl-lm-adapt_all"
+        ],
+        "alpha": 0.6
+    }
+}

@@ -17,7 +17,7 @@ def get_host_ip():
 def execute_model(dataloader, inference_func, type):
     host_ip = get_host_ip()
 
-    start_energy = sum(list(get_energy_by_group().values()))
+    # start_energy = sum(list(get_energy_by_group().values()))
     inference_count = 0
     latency_list = []
     for step, batch in enumerate(tqdm(dataloader)):
@@ -29,13 +29,13 @@ def execute_model(dataloader, inference_func, type):
             inference_count += 1
         end_time  = time.perf_counter()
         latency_list.append(end_time-start_time)
-    end_energy = sum(list(get_energy_by_group().values()))
+    # end_energy = sum(list(get_energy_by_group().values()))
 
     basedir = os.path.dirname(__file__)
     data = {
         "host_ip": host_ip,
         "latency": latency_list,
-        "energy": end_energy-start_energy,
+        # "energy": end_energy-start_energy,
         "inference_count": inference_count,
     }
     with open(os.path.join(basedir, f"{type}_{host_ip}.json"), "w") as fp:

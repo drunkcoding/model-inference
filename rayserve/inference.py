@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from attr import field
 from concurrent.futures import ProcessPoolExecutor
 import pandas as pd
+import pynvml
 
 from transformers import (
     AutoConfig,
@@ -260,30 +261,39 @@ system_options = SystemOptions(
 # ====== MODEL DEFINATION ==============
 
 
-@serve.deployment(max_concurrent_queries=10)
+@serve.deployment(max_concurrent_queries=100)
 class HServeModel:
     def __init__(self, options: Dict, model_id: int, key: str) -> None:
 
         # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(VISIBLE_GPUS)
-
         gid = str(ray.get_gpu_ids()[0])
-        print("gid", gid, ray._private.utils.get_cuda_visible_devices(), flush=True)
         host = ray._private.services.get_node_ip_address()
-        print("host", host, flush=True)
-        self.device = torch.cuda.current_device()  # torch.device(f"cuda:{gid}")
-        print("device", "cuda:" + str(gid), flush=True)
 
-        print(gid, host, self.device, flush=True)
-        print(options, model_id, key, flush=True)
+        pynvml.nvmlInit()
+        self.handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        self.namespace = ray.get_runtime_context().namespace
 
         self.config = options[host].placement[gid][model_id]
         print(self.config, flush=True)
 
-        filename = (
-            __file__.split(".")[0]
-            + f"_{self.config.name}_e{self.config.epos}p{self.config.ppos}_{host}"
+        filename = os.path.join(
+            os.path.dirname(__file__),
+            self.namespace,
+            f"{host}_e{self.config.epos}p{self.config.ppos}_{gid}_{model_id}",
         )
-        self.logger = Logger(filename, logging.INFO, 50000000, 5)
+        print(filename, flush=True)
+        try:
+            os.mkdir(os.path.dirname(filename))
+        except OSError as error:
+            print(error) 
+        self.logger = Logger(filename, logging.INFO, 50000000, 5, mode="w")
+
+        self.device = torch.cuda.current_device()  # torch.device(f"cuda:{gid}")
+        print("device", "cuda:" + str(gid), flush=True)
+
+        print(gid, host, self.device, flush=True)
+        # self.logger.info("options %s", options)
+        # self.logger.info("%s", ["x"] * 1000)
 
         self.key = key
 
@@ -337,8 +347,113 @@ class HServeModel:
                 self.model = ViTPytorchPipeRandom(config)
             elif "gpt" in self.config.name:
                 self.model = GPTPytorchPipeRandom(config)
+                self.model.layer_param = np.array([
+                    321361920,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453064704,
+                    453076992,
+                    308779008,
+                ])
+                self.model.total_params = sum(self.model.layer_param)
             elif "t5" in self.config.name:
                 self.model = T5PytorchPipeRandom(config)
+                self.model.layer_param = np.array([
+                    197394432,
+                    289421312,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    289419264,
+                    6144,
+                    197394432,
+                    390090752,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    390088704,
+                    6144,
+                    197394432,
+                ])
+                self.model.total_params = sum(self.model.layer_param)
             else:
                 raise ValueError(
                     "%s undefined random model name %s" % (self.key, self.config.name)
@@ -373,26 +488,37 @@ class HServeModel:
     @torch.no_grad()
     def model_inference(self, args, mask, uid):
         start_time = time.perf_counter()
+        start_power = pynvml.nvmlDeviceGetPowerUsage(self.handle)
         # self.logger.debug("%s args %s", self.key, args)
         if self.config.ppos == 0:
             args = tuple(torch.from_numpy(arg[mask]).to(self.device) for arg in args)
         else:
             args = tuple(arg.to(self.device) for arg in args)
+        batch_size = args[0].shape[0]
         with torch.cuda.stream(self.cuda_stream):
             outputs = self.model(args)
         self.cuda_stream.synchronize()  # MUST sync otherwise outputs are zeros
         end_time = time.perf_counter()
         if self.is_last_stage:
-            outputs = outputs.squeeze(1) / self.config.temp
+            # self.logger.debug(
+            #     "[%s] %s outputs %s",
+            #     uid,
+            #     self.key,
+            #     outputs.shape,
+            # )
+            outputs = outputs.squeeze(1)
             if "t5" in self.config.name:
                 outputs = outputs[:, T5_TASK_LABELS]
             if "gpt" in self.config.name:
                 outputs = outputs[:, -1, :50257]
             outputs = outputs.detach().cpu().numpy()
             # outputs = temperature_scale(outputs, self.config.temp)
-
+        end_power = pynvml.nvmlDeviceGetPowerUsage(self.handle)
         self.logger.info(
-            "[%s] %s inference %s (ms)", uid, self.key, (end_time - start_time) * 1000,
+            "[%s,%s] %s (%s) inference %s %s",
+            uid, self.namespace, self.key, batch_size,
+            (start_time, end_time, start_power, end_power),
+            end_time - start_time,
         )
 
         return outputs
@@ -401,32 +527,38 @@ class HServeModel:
         return self.model_inference(*args, **kwds)
 
 
-@serve.deployment(max_concurrent_queries=100)
+@serve.deployment(max_concurrent_queries=1000)
 class HybridScheduler:
-    def __init__(self, options: SystemOptions):
+    def __init__(self, options: SystemOptions, id: int):
 
         self.config = options
-
-        filename = (
-            __file__.split(".")[0]
-            + f"_{options.type}_{options.ens}_{ray._private.services.get_node_ip_address()}"
+        self.namespace = ray.get_runtime_context().namespace
+        filename = os.path.join(
+            os.path.dirname(__file__),
+            self.namespace,
+            f"{ray._private.services.get_node_ip_address()}_{id}",
         )
+        print(filename, flush=True)
+        try:
+            os.mkdir(os.path.dirname(filename))
+        except OSError as error:
+            print(error) 
 
-        self.logger = Logger(filename, logging.INFO, 50000000, 5)
-        self.logger.info("HybridScheduler logger initialized")
+        self.logger = Logger(filename, logging.INFO, 50000000, 5, mode="w")
+        # self.logger.info("HybridScheduler logger initialized")
 
         # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(VISIBLE_GPUS)
         # self.logger.info("CUDA_VISIBLE_DEVICES: %s", os.environ["CUDA_VISIBLE_DEVICES"])
 
-        self.logger.info("HybridScheduler cfg %s", options)
+        # self.logger.info("HybridScheduler cfg %s", options)
 
         self.calibrators = {}
 
         self.ensembles = options.ensemble_options
         self.num_ensembles = len(options.ensemble_options)
 
-        self.logger.info("Current ensembles %s", self.ensembles)
-        self.logger.info("Worker IP %s", ray._private.services.get_node_ip_address())
+        # self.logger.info("Current ensembles %s", self.ensembles)
+        # self.logger.info("Worker IP %s", ray._private.services.get_node_ip_address())
 
     def schedule_handle(self, parallel_options):
         # keys = list(parallel_options.keys())
@@ -436,12 +568,12 @@ class HybridScheduler:
         # idx = np.random.choice(list(range(len(keys))), 1)[0]
         # key = keys[idx]
         # parallel_options[key] += 1
-        self.logger.debug("parallel_options %s", parallel_options)
+        # self.logger.debug("parallel_options %s", parallel_options)
         num_replicas = len(parallel_options.replications)
         parallel_options.rr_counter += 1
-        r = parallel_options.rr_counter % num_replicas
+        r = (parallel_options.rr_counter + np.random.randint(0, num_replicas)) % num_replicas
         key = parallel_options.replications[r]
-        self.logger.debug("parallel_options %s", parallel_options)
+        # self.logger.debug("parallel_options %s", parallel_options)
         return serve.get_deployment(key).get_handle(sync=False)
 
     async def __call__(self, request) -> Any:
@@ -476,12 +608,15 @@ class HybridScheduler:
 
     async def post_processing(self, ensemble_outputs, outputs, batch_mask, idx, uid):
         local_mask = batch_mask[idx]
-        # outputs = ray.get(outputs)
-        # ensemble_outputs = self.model_ensemble(
-        #     ensemble_outputs, outputs, local_mask, idx
-        # )
-        name = self.config.ensemble_options[idx].name
-        ensemble_outputs = ray.get(outputs)
+        outputs = ray.get(outputs)
+        ensemble_outputs = self.model_ensemble(
+            ensemble_outputs, outputs, local_mask, idx
+        )
+        # name = self.config.ensemble_options[idx].name
+        # if ensemble_outputs is None:
+        #     ensemble_outputs = ray.get(outputs) 
+        # else:
+        #     ensemble_outputs[local_mask] = 
 
         extended_mask, max_prob = self.offload_mask(
             ensemble_outputs, local_mask, idx, uid
@@ -494,35 +629,58 @@ class HybridScheduler:
             batch_mask = self.update_batch_mask(
                 max_prob, batch_mask.copy(), extended_mask, idx, uid
             )
-            self.logger.debug("%s batch_mask updated %s", name, batch_mask)
+            # self.logger.debug("%s batch_mask updated %s", name, batch_mask)
 
         return ensemble_outputs, batch_mask
 
+    @serve.batch(max_batch_size=4)
+    async def handle_batch(self, args_list):
+        outputs_list = []
+        for args in args_list:
+            outputs = await self.ensemble_inference(args)
+            outputs_list.append(outputs)
+        return outputs_list
+
     # This method can be called concurrently!
     async def ensemble_inference(self, args):
-
-        uid = uuid.uuid4().hex
+        # self.logger.info("received %s", uid)
 
         req_start_time = time.perf_counter()
 
+        # start_time = time.perf_counter()
+        uid = uuid.uuid4().hex
+        # end_time = time.perf_counter()
+        # self.logger.info(
+        #     "uuid gen %s",
+        #     end_time - start_time
+        # )
+
+        # start_time = time.perf_counter()
         batch_size = len(args[0])
         ensemble_outputs = None
         batch_mask = np.zeros((self.num_ensembles, batch_size))
         # batch_mask = np.ones((self.num_ensembles, batch_size))
         batch_mask[0, :] = 1  # WHERE TO ENTER
         batch_mask = batch_mask.astype(bool)
+        # end_time = time.perf_counter()
+        # self.logger.info(
+        #     "batch_mask gen %s",
+        #     end_time - start_time
+        # )
 
         for idx, options in enumerate(self.ensembles):
-            name = self.config.ensemble_options[idx].name
+            # name = self.config.ensemble_options[idx].name
             outputs = args
             local_mask = batch_mask[idx]
-            self.logger.debug("%s local_mask %s", options.name, local_mask)
+            # self.logger.debug("%s local_mask %s", options.name, local_mask)
 
             if np.any(local_mask):
                 for parallel_options in options.parallel_options:
                     handle = self.schedule_handle(parallel_options)
                     # start_time = time.perf_counter()
-                    outputs = await handle.model_inference.remote(outputs, local_mask, uid)
+                    outputs = await handle.model_inference.remote(
+                        outputs, local_mask, uid
+                    )
                     # end_time = time.perf_counter()
                     # self.logger.info(
                     #     "[%s] %s (%s) inference (%s, %s) %s (ms)",
@@ -540,7 +698,7 @@ class HybridScheduler:
                 if (idx + 1) < self.num_ensembles and np.sum(
                     batch_mask[(idx + 1) :]
                 ) == 0:
-                    self.logger.debug("%s early exit %s", name, batch_mask)
+                    # self.logger.debug("%s early exit %s", name, batch_mask)
                     break
 
                 # outputs = ray.get(outputs)
@@ -571,7 +729,10 @@ class HybridScheduler:
 
         req_end_time = time.perf_counter()
         self.logger.info(
-            "[%s] request %s (ms)", uid, (req_end_time - req_start_time) * 1000,
+            "[%s,%s] request(%s) %s %s",
+            uid, self.namespace, batch_size,
+            (req_start_time, req_end_time),
+            req_end_time - req_start_time
         )
         gc.collect()
         torch.cuda.empty_cache()
@@ -583,8 +744,10 @@ class HybridScheduler:
 
         name = self.config.ensemble_options[idx].name
         if name not in self.calibrators:
+            user = os.path.expanduser("~")
             with open(
-                f"/home/xly/model-inference/inference_dump/{name}_calibrator", "rb",
+                os.path.join(user, f"model-inference/inference_dump/{name}_calibrator"),
+                "rb",
             ) as f:
                 self.calibrators[name] = dill.load(f)
 
@@ -595,18 +758,20 @@ class HybridScheduler:
             max_prob = np.min(max_prob, axis=1)
         prob_mask = max_prob < self.config.ensemble_options[idx].th
         self.logger.debug(
-            "(offload_mask) prob_mask %s %s", prob_mask, mask,
+            "(offload_mask) prob_mask %s %s",
+            prob_mask,
+            mask,
         )
         combined_mask = mask & prob_mask
         self.logger.debug("max_prob %s, combined_mask %s", max_prob, combined_mask)
         end_time = time.perf_counter()
         self.logger.info(
-            "[%s] %s offload_mask time elapsed (%s, %s) %s (ms)",
+            "[%s] %s offload_mask (%s, %s) %s",
             uid,
             name,
             start_time,
             end_time,
-            (end_time - start_time) * 1000,
+            end_time - start_time,
         )
         return combined_mask, max_prob
 
@@ -625,24 +790,24 @@ class HybridScheduler:
     #     self.logger.debug("max_prob %s, extended_mask %s", max_prob, extended_mask)
     #     return extended_mask, max_prob
 
-    # def model_ensemble(self, hist_outputs, outputs, mask, idx):
-    #     start_time = time.perf_counter()
-    #     if hist_outputs is not None:
-    #         hist_outputs[mask] = (
-    #             hist_outputs[mask] * (1 - self.config.alpha)
-    #             + outputs * self.config.alpha
-    #         )
-    #     else:
-    #         hist_outputs = outputs.copy()
-    #     end_time = time.perf_counter()
-    #     self.logger.info(
-    #         "%s model_ensemble time elapsed (%s, %s) %s (ms)",
-    #         self.config.ensemble_options[idx].name,
-    #         start_time,
-    #         end_time,
-    #         (end_time - start_time) * 1000,
-    #     )
-    #     return hist_outputs  # MEMCOPY MUTABLE
+    def model_ensemble(self, hist_outputs, outputs, mask, idx):
+        start_time = time.perf_counter()
+        if hist_outputs is not None:
+            hist_outputs[mask] = (
+                hist_outputs[mask] * (1 - self.config.alpha)
+                + outputs * self.config.alpha
+            )
+        else:
+            hist_outputs = outputs.copy()
+        end_time = time.perf_counter()
+        self.logger.info(
+            "%s model_ensemble time elapsed (%s, %s) %s (ms)",
+            self.config.ensemble_options[idx].name,
+            start_time,
+            end_time,
+            (end_time - start_time) * 1000,
+        )
+        return hist_outputs  # MEMCOPY MUTABLE
 
     # def model_ensemble(self, ensemble_outputs, local_outputs, mask, idx):
     #     # start_time = time.perf_counter()
@@ -722,10 +887,21 @@ class HybridScheduler:
 
 # ray.init(address="ray://129.215.164.41:10001")
 
+import socket
+
+
+def get_host_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 1))
+    host_ip = s.getsockname()[0]
+    return host_ip
+
+
 # ====== START SERVER ==============
 # ray.init(namespace=args.namespace, num_cpus=80, num_gpus=torch.cuda.device_count())
-ray.init(address="ray://129.215.164.41:10001", namespace=args.namespace)
-serve.start(detached=True)
+host_ip = get_host_ip()
+ray.init(address=f"ray://{host_ip}:10001", namespace=args.namespace)
+serve.start(detached=True, http_options=serve.HTTPOptions(port=8888))
 
 # print("ray initialized", args)
 
@@ -749,7 +925,10 @@ for host, h_op in host_options.items():
 #                 replica=r_op.replica,
 #             )
 
-
-HybridScheduler.options(
-    name="hybrid-scheduler", num_replicas=20, ray_actor_options={"num_cpus": 2},
-).deploy(system_options)
+for host, _ in host_options.items():
+    for r in range(1):
+        HybridScheduler.options(
+            name=f"hybrid-scheduler_{host}_{r}",
+            num_replicas=1,
+            ray_actor_options={"num_cpus": 0.1, "resources": {f"{host}": 1}},
+        ).deploy(system_options, r)

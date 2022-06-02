@@ -15,5 +15,11 @@ WORKERS=( "172.31.35.95" \
 )
 
 for WORKER in "${WORKERS[@]}"; do
-    ssh -t ${WORKER} "/home/ubuntu/miniconda3/envs/torch/bin/ray start --address='172.31.35.95:6379' --redis-password='5241590000000000' --num-cpus=4 --num-gpus 1 --resources '{\"${WORKER}\": 5}'"
+    ssh ${WORKER} "/home/ubuntu/miniconda3/envs/torch/bin/ray stop -f"
+done
+
+ray start --head
+
+for WORKER in "${WORKERS[@]}"; do
+    ssh ${WORKER} "/home/ubuntu/miniconda3/envs/torch/bin/ray start --address='172.31.35.95:6379' --redis-password='5241590000000000' --num-cpus=4 --num-gpus 1 --resources '{\"${WORKER}\": 20}'"
 done
